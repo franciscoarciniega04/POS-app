@@ -8,10 +8,7 @@ import 'product_detail_screen.dart';
 class ProductsScreen extends StatefulWidget {
   final AppDatabase database;
 
-  const ProductsScreen({
-    super.key,
-    required this.database,
-  });
+  const ProductsScreen({super.key, required this.database});
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -48,15 +45,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
               stream: widget.database.watchAllProducts(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(),
-                  );
+                  return const Center(child: CircularProgressIndicator());
                 }
 
                 if (snapshot.hasError) {
-                  return Center(
-                    child: Text('Error: ${snapshot.error}'),
-                  );
+                  return Center(child: Text('Error: ${snapshot.error}'));
                 }
 
                 final products = snapshot.data ?? [];
@@ -76,7 +69,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 return ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
                   itemCount: activeProducts.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
                     final product = activeProducts[index];
 
@@ -127,9 +120,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     if (created == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Producto guardado correctamente.'),
-        ),
+        const SnackBar(content: Text('Producto guardado correctamente.')),
       );
     }
   }
@@ -163,20 +154,16 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${product.name} fue desactivado.'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${product.name} fue desactivado.')));
   }
 }
 
 class _SearchBox extends StatelessWidget {
   final ValueChanged<String> onChanged;
 
-  const _SearchBox({
-    required this.onChanged,
-  });
+  const _SearchBox({required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -215,6 +202,8 @@ class _ProductCard extends StatelessWidget {
     final isLowStock = product.currentStock <= product.minStock;
 
     return Card(
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(18),
@@ -226,12 +215,12 @@ class _ProductCard extends StatelessWidget {
                 width: 54,
                 height: 54,
                 decoration: BoxDecoration(
-                  color: Colors.indigo.withOpacity(0.10),
+                  color: const Color(0xFFEEF2FF),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: const Icon(
                   Icons.inventory_2_outlined,
-                  color: Colors.indigo,
+                  color: Color(0xFF4338CA),
                 ),
               ),
               const SizedBox(width: 14),
@@ -242,8 +231,8 @@ class _ProductCard extends StatelessWidget {
                     Text(
                       product.name,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -255,8 +244,8 @@ class _ProductCard extends StatelessWidget {
                           'Código: ${product.barcode}',
                       ].join(' · '),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade700,
-                          ),
+                        color: Colors.grey.shade700,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Wrap(
@@ -313,28 +302,32 @@ class _InfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? Colors.redAccent : Colors.blueGrey;
+    final backgroundColor = danger
+        ? const Color(0xFFFFE4E6)
+        : const Color(0xFFEFF6FF);
+
+    final foregroundColor = danger
+        ? const Color(0xFFBE123C)
+        : const Color(0xFF1E4E79);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: foregroundColor.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            icon,
-            size: 16,
-            color: color,
-          ),
+          Icon(icon, size: 16, color: foregroundColor),
           const SizedBox(width: 6),
           Text(
             label,
             style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w600,
+              color: foregroundColor,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
             ),
           ),
         ],
@@ -372,9 +365,9 @@ class _EmptyProductsState extends StatelessWidget {
               hasSearchText
                   ? 'No encontramos productos'
                   : 'Todavía no tienes productos',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
@@ -382,9 +375,9 @@ class _EmptyProductsState extends StatelessWidget {
               hasSearchText
                   ? 'Prueba con otro nombre, SKU o código de barras.'
                   : 'Agrega tu primer producto para comenzar a vender y controlar inventario.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey.shade700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
               textAlign: TextAlign.center,
             ),
             if (!hasSearchText) ...[

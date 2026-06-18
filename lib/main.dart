@@ -8,7 +8,5 @@ void main() {
 
   final database = AppDatabase();
 
-  runApp(
-    PosApp(database: database),
-  );
+  runApp(PosApp(database: database));
 }

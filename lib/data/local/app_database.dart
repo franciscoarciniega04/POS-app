@@ -15,7 +15,8 @@ class Products extends Table {
 
   TextColumn get description => text().nullable()();
 
-  IntColumn get purchasePriceCents => integer().withDefault(const Constant(0))();
+  IntColumn get purchasePriceCents =>
+      integer().withDefault(const Constant(0))();
 
   IntColumn get salePriceCents => integer().withDefault(const Constant(0))();
 
@@ -138,6 +139,27 @@ class CashTransactions extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+class PurchaseLineInput {
+  final int productId;
+  final int quantity;
+  final int unitCostCents;
+
+  const PurchaseLineInput({
+    required this.productId,
+    required this.quantity,
+    required this.unitCostCents,
+  });
+
+  int get subtotalCents => quantity * unitCostCents;
+}
+
+class PurchaseItemDetail {
+  final PurchaseItem purchaseItem;
+  final Product product;
+
+  const PurchaseItemDetail({required this.purchaseItem, required this.product});
+}
+
 @DriftDatabase(
   tables: [
     Products,
@@ -182,7 +204,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<bool> updateProduct(Product product) {
-    return update(products).replace(product.copyWith(updatedAt: DateTime.now()));
+    return update(
+      products,
+    ).replace(product.copyWith(updatedAt: DateTime.now()));
   }
 
   Future<int> deactivateProduct(int productId) {
@@ -201,8 +225,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<Product?> getProductById(int productId) async {
-    final rows = await (select(products)..where((tbl) => tbl.id.equals(productId)))
-        .get();
+    final rows = await (select(
+      products,
+    )..where((tbl) => tbl.id.equals(productId))).get();
 
     if (rows.isEmpty) return null;
 
@@ -244,12 +269,12 @@ class AppDatabase extends _$AppDatabase {
     String? note,
   }) async {
     await transaction(() async {
-      final product = await (select(products)
-            ..where((tbl) => tbl.id.equals(productId)))
-          .getSingle();
+      final product = await (select(
+        products,
+      )..where((tbl) => tbl.id.equals(productId))).getSingle();
 
       final newStock = product.currentStock + quantity;
-      
+
       if (newStock < 0) {
         throw Exception('El stock no puede quedar en negativo.');
       }
@@ -278,11 +303,155 @@ class AppDatabase extends _$AppDatabase {
           ..where((tbl) => tbl.productId.equals(productId))
           ..orderBy([
             (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
+              expression: tbl.createdAt,
+              mode: OrderingMode.desc,
+            ),
           ]))
         .watch();
+  }
+
+  // -------------------------
+  // Compras
+  // -------------------------
+
+  Stream<List<Purchase>> watchAllPurchases() {
+    return (select(purchases)..orderBy([
+          (tbl) =>
+              OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc),
+        ]))
+        .watch();
+  }
+
+  Stream<Purchase?> watchPurchaseById(int purchaseId) {
+    return (select(purchases)..where((tbl) => tbl.id.equals(purchaseId)))
+        .watch()
+        .map((rows) => rows.isEmpty ? null : rows.first);
+  }
+
+  Stream<List<PurchaseItemDetail>> watchPurchaseItemsWithProducts(
+    int purchaseId,
+  ) {
+    final query = select(purchaseItems).join([
+      innerJoin(products, products.id.equalsExp(purchaseItems.productId)),
+    ]);
+
+    query.where(purchaseItems.purchaseId.equals(purchaseId));
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return PurchaseItemDetail(
+          purchaseItem: row.readTable(purchaseItems),
+          product: row.readTable(products),
+        );
+      }).toList();
+    });
+  }
+
+  Future<int> createPurchase({
+    String? supplierName,
+    String? note,
+    required List<PurchaseLineInput> items,
+  }) async {
+    if (items.isEmpty) {
+      throw ArgumentError('La compra debe contener al menos un producto.');
+    }
+
+    final productIds = <int>{};
+
+    for (final item in items) {
+      if (item.quantity <= 0) {
+        throw ArgumentError('Todas las cantidades deben ser mayores que cero.');
+      }
+
+      if (item.unitCostCents < 0) {
+        throw ArgumentError('El costo de compra no puede ser negativo.');
+      }
+
+      if (!productIds.add(item.productId)) {
+        throw ArgumentError(
+          'El mismo producto no puede aparecer dos veces en la compra.',
+        );
+      }
+    }
+
+    final cleanSupplierName = supplierName?.trim();
+    final cleanNote = note?.trim();
+
+    final storedSupplierName =
+        cleanSupplierName == null || cleanSupplierName.isEmpty
+        ? null
+        : cleanSupplierName;
+
+    final storedNote = cleanNote == null || cleanNote.isEmpty
+        ? null
+        : cleanNote;
+
+    final totalCents = items.fold<int>(
+      0,
+      (total, item) => total + item.subtotalCents,
+    );
+
+    return transaction(() async {
+      final purchaseId = await into(purchases).insert(
+        PurchasesCompanion(
+          supplierName: Value(storedSupplierName),
+          note: Value(storedNote),
+          totalCents: Value(totalCents),
+          status: const Value('completed'),
+        ),
+      );
+
+      for (final item in items) {
+        final productRows = await (select(
+          products,
+        )..where((tbl) => tbl.id.equals(item.productId))).get();
+
+        if (productRows.isEmpty) {
+          throw StateError(
+            'No se encontró el producto con ID ${item.productId}.',
+          );
+        }
+
+        final product = productRows.first;
+        final newStock = product.currentStock + item.quantity;
+
+        await into(purchaseItems).insert(
+          PurchaseItemsCompanion(
+            purchaseId: Value(purchaseId),
+            productId: Value(item.productId),
+            quantity: Value(item.quantity),
+            unitCostCents: Value(item.unitCostCents),
+            subtotalCents: Value(item.subtotalCents),
+          ),
+        );
+
+        await (update(
+          products,
+        )..where((tbl) => tbl.id.equals(item.productId))).write(
+          ProductsCompanion(
+            currentStock: Value(newStock),
+            purchasePriceCents: Value(item.unitCostCents),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+        await into(inventoryMovements).insert(
+          InventoryMovementsCompanion(
+            productId: Value(item.productId),
+            type: const Value('purchase_entry'),
+            quantity: Value(item.quantity),
+            stockAfterMovement: Value(newStock),
+            note: Value(
+              storedSupplierName == null
+                  ? 'Entrada por compra #$purchaseId'
+                  : 'Compra #$purchaseId · $storedSupplierName',
+            ),
+          ),
+        );
+      }
+
+      return purchaseId;
+    });
   }
 
   // -------------------------
@@ -294,13 +463,10 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Stream<List<Expense>> watchExpenses() {
-    return (select(expenses)
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
+    return (select(expenses)..orderBy([
+          (tbl) =>
+              OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc),
+        ]))
         .watch();
   }
 }

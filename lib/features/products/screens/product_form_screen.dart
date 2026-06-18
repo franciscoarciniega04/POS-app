@@ -7,11 +7,7 @@ class ProductFormScreen extends StatefulWidget {
   final AppDatabase database;
   final Product? product;
 
-  const ProductFormScreen({
-    super.key,
-    required this.database,
-    this.product,
-  });
+  const ProductFormScreen({super.key, required this.database, this.product});
 
   @override
   State<ProductFormScreen> createState() => _ProductFormScreenState();
@@ -44,7 +40,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _skuController.text = product.sku ?? '';
       _barcodeController.text = product.barcode ?? '';
       _descriptionController.text = product.description ?? '';
-      _purchasePriceController.text = _centsToMoneyText(product.purchasePriceCents);
+      _purchasePriceController.text = _centsToMoneyText(
+        product.purchasePriceCents,
+      );
       _salePriceController.text = _centsToMoneyText(product.salePriceCents);
       _minStockController.text = product.minStock.toString();
     }
@@ -206,9 +204,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   const SizedBox(height: 12),
                   Text(
                     'Para modificar la existencia actual usa “Ajustar stock” desde el detalle del producto.',
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade700),
                   ),
                 ],
               ],
@@ -266,9 +262,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         _purchasePriceController.text,
       );
 
-      final salePriceCents = _moneyTextToCents(
-        _salePriceController.text,
-      );
+      final salePriceCents = _moneyTextToCents(_salePriceController.text);
 
       final minStock = _textToInt(_minStockController.text);
 
@@ -314,11 +308,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     } catch (error) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('No se pudo guardar: $error'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo guardar: $error')));
     } finally {
       if (mounted) {
         setState(() {
@@ -386,16 +378,13 @@ class _SectionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  icon,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                Icon(icon, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 10),
                 Text(
                   title,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ],
             ),

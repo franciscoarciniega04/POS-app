@@ -45,9 +45,7 @@ class ProductDetailScreen extends StatelessWidget {
 
                     if (updated == true && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Producto actualizado.'),
-                        ),
+                        const SnackBar(content: Text('Producto actualizado.')),
                       );
                     }
                   },
@@ -71,28 +69,19 @@ class ProductDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBody(
-    BuildContext context,
-    AsyncSnapshot<Product?> snapshot,
-  ) {
+  Widget _buildBody(BuildContext context, AsyncSnapshot<Product?> snapshot) {
     if (snapshot.connectionState == ConnectionState.waiting) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (snapshot.hasError) {
-      return Center(
-        child: Text('Error: ${snapshot.error}'),
-      );
+      return Center(child: Text('Error: ${snapshot.error}'));
     }
 
     final product = snapshot.data;
 
     if (product == null) {
-      return const Center(
-        child: Text('Producto no encontrado.'),
-      );
+      return const Center(child: Text('Producto no encontrado.'));
     }
 
     return ListView(
@@ -102,10 +91,7 @@ class ProductDetailScreen extends StatelessWidget {
         const SizedBox(height: 16),
         _InventoryCard(product: product),
         const SizedBox(height: 16),
-        _MovementsCard(
-          database: database,
-          productId: product.id,
-        ),
+        _MovementsCard(database: database, productId: product.id),
       ],
     );
   }
@@ -119,18 +105,13 @@ class ProductDetailScreen extends StatelessWidget {
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) {
-        return _StockAdjustmentSheet(
-          database: database,
-          product: product,
-        );
+        return _StockAdjustmentSheet(database: database, product: product);
       },
     );
 
     if (updated == true && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Stock actualizado correctamente.'),
-        ),
+        const SnackBar(content: Text('Stock actualizado correctamente.')),
       );
     }
   }
@@ -139,9 +120,7 @@ class ProductDetailScreen extends StatelessWidget {
 class _ProductSummaryCard extends StatelessWidget {
   final Product product;
 
-  const _ProductSummaryCard({
-    required this.product,
-  });
+  const _ProductSummaryCard({required this.product});
 
   @override
   Widget build(BuildContext context) {
@@ -159,7 +138,7 @@ class _ProductSummaryCard extends StatelessWidget {
                   width: 58,
                   height: 58,
                   decoration: BoxDecoration(
-                    color: Colors.indigo.withOpacity(0.10),
+                    color: Colors.indigo.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: const Icon(
@@ -176,8 +155,8 @@ class _ProductSummaryCard extends StatelessWidget {
                       Text(
                         product.name,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -185,8 +164,8 @@ class _ProductSummaryCard extends StatelessWidget {
                             ? product.description!
                             : 'Sin descripción',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey.shade700,
-                            ),
+                          color: Colors.grey.shade700,
+                        ),
                       ),
                     ],
                   ),
@@ -247,9 +226,7 @@ class _ProductSummaryCard extends StatelessWidget {
 class _InventoryCard extends StatelessWidget {
   final Product product;
 
-  const _InventoryCard({
-    required this.product,
-  });
+  const _InventoryCard({required this.product});
 
   @override
   Widget build(BuildContext context) {
@@ -261,10 +238,7 @@ class _InventoryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _SectionTitle(
-              icon: Icons.warehouse_outlined,
-              title: 'Inventario',
-            ),
+            _SectionTitle(icon: Icons.warehouse_outlined, title: 'Inventario'),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -291,15 +265,12 @@ class _InventoryCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.redAccent.withOpacity(0.10),
+                  color: Colors.redAccent.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Row(
                   children: [
-                    Icon(
-                      Icons.warning_amber_rounded,
-                      color: Colors.redAccent,
-                    ),
+                    Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -325,10 +296,7 @@ class _MovementsCard extends StatelessWidget {
   final AppDatabase database;
   final int productId;
 
-  const _MovementsCard({
-    required this.database,
-    required this.productId,
-  });
+  const _MovementsCard({required this.database, required this.productId});
 
   @override
   Widget build(BuildContext context) {
@@ -349,9 +317,7 @@ class _MovementsCard extends StatelessWidget {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Padding(
                     padding: EdgeInsets.all(20),
-                    child: Center(
-                      child: CircularProgressIndicator(),
-                    ),
+                    child: Center(child: CircularProgressIndicator()),
                   );
                 }
 
@@ -363,9 +329,7 @@ class _MovementsCard extends StatelessWidget {
                     child: Center(
                       child: Text(
                         'Sin movimientos todavía.',
-                        style: TextStyle(
-                          color: Colors.grey.shade700,
-                        ),
+                        style: TextStyle(color: Colors.grey.shade700),
                       ),
                     ),
                   );
@@ -389,9 +353,7 @@ class _MovementsCard extends StatelessWidget {
 class _MovementTile extends StatelessWidget {
   final InventoryMovement movement;
 
-  const _MovementTile({
-    required this.movement,
-  });
+  const _MovementTile({required this.movement});
 
   @override
   Widget build(BuildContext context) {
@@ -412,8 +374,8 @@ class _MovementTile extends StatelessWidget {
         children: [
           CircleAvatar(
             backgroundColor: isEntry
-                ? Colors.green.withOpacity(0.12)
-                : Colors.redAccent.withOpacity(0.12),
+                ? Colors.green.withValues(alpha: 0.12)
+                : Colors.redAccent.withValues(alpha: 0.12),
             child: Icon(
               isEntry ? Icons.arrow_upward : Icons.arrow_downward,
               color: isEntry ? Colors.green : Colors.redAccent,
@@ -426,25 +388,18 @@ class _MovementTile extends StatelessWidget {
               children: [
                 Text(
                   _movementLabel(movement.type),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   DateFormat('dd/MM/yyyy HH:mm').format(movement.createdAt),
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                 ),
                 if (movement.note?.isNotEmpty == true) ...[
                   const SizedBox(height: 4),
                   Text(
                     movement.note!,
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade700),
                   ),
                 ],
               ],
@@ -464,10 +419,7 @@ class _MovementTile extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 'Stock: ${movement.stockAfterMovement}',
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
               ),
             ],
           ),
@@ -496,10 +448,7 @@ class _StockAdjustmentSheet extends StatefulWidget {
   final AppDatabase database;
   final Product product;
 
-  const _StockAdjustmentSheet({
-    required this.database,
-    required this.product,
-  });
+  const _StockAdjustmentSheet({required this.database, required this.product});
 
   @override
   State<_StockAdjustmentSheet> createState() => _StockAdjustmentSheetState();
@@ -553,8 +502,8 @@ class _StockAdjustmentSheetState extends State<_StockAdjustmentSheet> {
                   child: Text(
                     'Ajustar stock',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ],
@@ -564,9 +513,7 @@ class _StockAdjustmentSheetState extends State<_StockAdjustmentSheet> {
               alignment: Alignment.centerLeft,
               child: Text(
                 widget.product.name,
-                style: TextStyle(
-                  color: Colors.grey.shade700,
-                ),
+                style: TextStyle(color: Colors.grey.shade700),
               ),
             ),
             const SizedBox(height: 18),
@@ -657,9 +604,7 @@ class _StockAdjustmentSheetState extends State<_StockAdjustmentSheet> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('No se pudo ajustar el stock: $error'),
-        ),
+        SnackBar(content: Text('No se pudo ajustar el stock: $error')),
       );
     } finally {
       if (mounted) {
@@ -675,25 +620,19 @@ class _SectionTitle extends StatelessWidget {
   final IconData icon;
   final String title;
 
-  const _SectionTitle({
-    required this.icon,
-    required this.title,
-  });
+  const _SectionTitle({required this.icon, required this.title});
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          icon,
-          color: Theme.of(context).colorScheme.primary,
-        ),
+        Icon(icon, color: Theme.of(context).colorScheme.primary),
         const SizedBox(width: 10),
         Text(
           title,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
         ),
       ],
     );
@@ -717,21 +656,20 @@ class _MetricBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? Colors.redAccent : Theme.of(context).colorScheme.primary;
+    final color = danger
+        ? Colors.redAccent
+        : Theme.of(context).colorScheme.primary;
 
     return Container(
       width: fullWidth ? double.infinity : null,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         children: [
-          Icon(
-            icon,
-            color: color,
-          ),
+          Icon(icon, color: color),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -739,10 +677,7 @@ class _MetricBox extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -766,27 +701,19 @@ class _InfoPill extends StatelessWidget {
   final String label;
   final String value;
 
-  const _InfoPill({
-    required this.label,
-    required this.value,
-  });
+  const _InfoPill({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 9,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
         color: const Color(0xFFF1F3F6),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         '$label: $value',
-        style: const TextStyle(
-          fontWeight: FontWeight.w700,
-        ),
+        style: const TextStyle(fontWeight: FontWeight.w700),
       ),
     );
   }

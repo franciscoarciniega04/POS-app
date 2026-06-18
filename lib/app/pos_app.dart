@@ -2,14 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../data/local/app_database.dart';
 import '../features/products/screens/products_screen.dart';
+import '../features/purchases/screens/purchases_screen.dart';
 
 class PosApp extends StatelessWidget {
   final AppDatabase database;
 
-  const PosApp({
-    super.key,
-    required this.database,
-  });
+  const PosApp({super.key, required this.database});
 
   @override
   Widget build(BuildContext context) {
@@ -41,10 +39,7 @@ class PosApp extends StatelessWidget {
 class HomeScreen extends StatelessWidget {
   final AppDatabase database;
 
-  const HomeScreen({
-    super.key,
-    required this.database,
-  });
+  const HomeScreen({super.key, required this.database});
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +48,8 @@ class HomeScreen extends StatelessWidget {
         title: 'Productos',
         subtitle: 'Catálogo, precios y stock',
         icon: Icons.inventory_2_outlined,
-        color: Colors.indigo,
+        iconColor: const Color(0xFF4338CA),
+        iconBackgroundColor: const Color(0xFFEEF2FF),
         onTap: () {
           Navigator.push(
             context,
@@ -67,35 +63,47 @@ class HomeScreen extends StatelessWidget {
         title: 'Compras',
         subtitle: 'Entradas de inventario',
         icon: Icons.shopping_cart_checkout_outlined,
-        color: Colors.green,
-        onTap: () {},
+        iconColor: const Color(0xFF15803D),
+        iconBackgroundColor: const Color(0xFFECFDF3),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PurchasesScreen(database: database),
+            ),
+          );
+        },
       ),
       _HomeModule(
         title: 'Ventas',
         subtitle: 'Registrar salidas y pagos',
         icon: Icons.point_of_sale_outlined,
-        color: Colors.orange,
+        iconColor: const Color(0xFFC2410C),
+        iconBackgroundColor: const Color(0xFFFFF7ED),
         onTap: () {},
       ),
       _HomeModule(
         title: 'Inventario',
         subtitle: 'Historial y movimientos',
         icon: Icons.warehouse_outlined,
-        color: Colors.blueGrey,
+        iconColor: const Color(0xFF475569),
+        iconBackgroundColor: const Color(0xFFF1F5F9),
         onTap: () {},
       ),
       _HomeModule(
         title: 'Gastos',
         subtitle: 'Control de egresos',
         icon: Icons.receipt_long_outlined,
-        color: Colors.redAccent,
+        iconColor: const Color(0xFFBE123C),
+        iconBackgroundColor: const Color(0xFFFFF1F2),
         onTap: () {},
       ),
       _HomeModule(
         title: 'Reportes',
         subtitle: 'Ventas, ganancias y resumen',
         icon: Icons.bar_chart_outlined,
-        color: Colors.purple,
+        iconColor: const Color(0xFF7E22CE),
+        iconBackgroundColor: const Color(0xFFFAF5FF),
         onTap: () {},
       ),
     ];
@@ -125,6 +133,8 @@ class HomeScreen extends StatelessWidget {
               final module = modules[index];
 
               return Card(
+                color: Colors.white,
+                surfaceTintColor: Colors.transparent,
                 child: InkWell(
                   borderRadius: BorderRadius.circular(18),
                   onTap: module.onTap,
@@ -133,15 +143,18 @@ class HomeScreen extends StatelessWidget {
                     child: Row(
                       children: [
                         Container(
-                          width: 52,
-                          height: 52,
+                          width: 56,
+                          height: 56,
                           decoration: BoxDecoration(
-                            color: module.color.withOpacity(0.12),
+                            color: module.iconBackgroundColor,
                             borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: module.iconColor.withValues(alpha: 0.12),
+                            ),
                           ),
                           child: Icon(
                             module.icon,
-                            color: module.color,
+                            color: module.iconColor,
                             size: 28,
                           ),
                         ),
@@ -153,22 +166,14 @@ class HomeScreen extends StatelessWidget {
                             children: [
                               Text(
                                 module.title,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.w700),
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 module.subtitle,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodyMedium
-                                    ?.copyWith(
-                                      color: Colors.grey.shade700,
-                                    ),
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: Colors.grey.shade700),
                               ),
                             ],
                           ),
@@ -191,14 +196,16 @@ class _HomeModule {
   final String title;
   final String subtitle;
   final IconData icon;
-  final Color color;
+  final Color iconColor;
+  final Color iconBackgroundColor;
   final VoidCallback onTap;
 
   const _HomeModule({
     required this.title,
     required this.subtitle,
     required this.icon,
-    required this.color,
+    required this.iconColor,
+    required this.iconBackgroundColor,
     required this.onTap,
   });
 }
