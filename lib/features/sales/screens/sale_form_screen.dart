@@ -2,43 +2,46 @@ import 'package:flutter/material.dart';
 
 import '../../../data/local/app_database.dart';
 import '../../../shared/utils/money_formatter.dart';
-import '../../suppliers/screens/supplier_form_screen.dart';
 
-class PurchaseFormScreen extends StatefulWidget {
+class SaleFormScreen extends StatefulWidget {
   final AppDatabase database;
 
-  const PurchaseFormScreen({super.key, required this.database});
+  const SaleFormScreen({super.key, required this.database});
 
   @override
-  State<PurchaseFormScreen> createState() => _PurchaseFormScreenState();
+  State<SaleFormScreen> createState() => _SaleFormScreenState();
 }
 
-class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
+class _SaleFormScreenState extends State<SaleFormScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  late final Stream<List<Supplier>> _suppliersStream;
+  final _customerNameController = TextEditingController();
+  final _discountController = TextEditingController(text: '0.00');
 
-  final _noteController = TextEditingController();
-  final List<_PurchaseDraftItem> _items = [];
+  final List<_SaleDraftItem> _items = [];
 
-  Supplier? _selectedSupplier;
-
+  String _paymentMethod = 'cash';
   bool _isSaving = false;
 
-  int get _totalCents {
+  int get _subtotalCents {
     return _items.fold<int>(0, (total, item) => total + item.subtotalCents);
   }
 
-  @override
-  void initState() {
-    super.initState();
+  int get _discountCents {
+    return _tryMoneyTextToCents(_discountController.text) ?? 0;
+  }
 
-    _suppliersStream = widget.database.watchSuppliers();
+  int get _totalCents {
+    final total = _subtotalCents - _discountCents;
+
+    return total < 0 ? 0 : total;
   }
 
   @override
   void dispose() {
-    _noteController.dispose();
+    _customerNameController.dispose();
+    _discountController.dispose();
+
     super.dispose();
   }
 
@@ -47,15 +50,17 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: AppBar(
-        title: const Text('Nueva compra'),
+        title: const Text('Nueva venta'),
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
       ),
-      bottomNavigationBar: _PurchaseBottomBar(
+      bottomNavigationBar: _SaleBottomBar(
+        subtotalCents: _subtotalCents,
+        discountCents: _discountCents,
         totalCents: _totalCents,
         itemCount: _items.length,
         isSaving: _isSaving,
-        onSave: _items.isEmpty ? null : _savePurchase,
+        onSave: _items.isEmpty ? null : _saveSale,
       ),
       body: Form(
         key: _formKey,
@@ -63,125 +68,96 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1000),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 130),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 180),
               children: [
-                _PurchaseSectionCard(
-                  title: 'Datos de la compra',
+                _SaleSectionCard(
+                  title: 'Datos de la venta',
                   icon: Icons.receipt_long_outlined,
                   children: [
-                    StreamBuilder<List<Supplier>>(
-                      stream: _suppliersStream,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                                ConnectionState.waiting &&
-                            !snapshot.hasData) {
-                          return const LinearProgressIndicator();
+                    TextFormField(
+                      controller: _customerNameController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Cliente',
+                        hintText: 'Opcional · Público general',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<String>(
+                      initialValue: _paymentMethod,
+                      decoration: const InputDecoration(
+                        labelText: 'Método de pago',
+                        prefixIcon: Icon(Icons.payment_outlined),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'cash',
+                          child: Text('Efectivo'),
+                        ),
+                        DropdownMenuItem(value: 'card', child: Text('Tarjeta')),
+                        DropdownMenuItem(
+                          value: 'transfer',
+                          child: Text('Transferencia'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'mixed',
+                          child: Text('Pago mixto'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
                         }
 
-                        if (snapshot.hasError) {
-                          return Text(
-                            'No fue posible cargar los proveedores: '
-                            '${snapshot.error}',
-                            style: const TextStyle(color: Colors.redAccent),
-                          );
-                        }
-
-                        final availableSuppliers =
-                            (snapshot.data ?? [])
-                                .where((supplier) => supplier.isActive)
-                                .toList()
-                              ..sort(
-                                (first, second) => first.name
-                                    .toLowerCase()
-                                    .compareTo(second.name.toLowerCase()),
-                              );
-
-                        if (availableSuppliers.isEmpty) {
-                          return _NoActiveSuppliers(
-                            onCreateSupplier: _openCreateSupplier,
-                          );
-                        }
-
-                        Supplier? validSelectedSupplier;
-
-                        for (final supplier in availableSuppliers) {
-                          if (supplier.id == _selectedSupplier?.id) {
-                            validSelectedSupplier = supplier;
-                            break;
-                          }
-                        }
-
-                        return DropdownButtonFormField<int>(
-                          key: ValueKey(validSelectedSupplier?.id),
-                          initialValue: validSelectedSupplier?.id,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Proveedor',
-                            hintText: 'Selecciona un proveedor',
-                            prefixIcon: Icon(Icons.local_shipping_outlined),
-                          ),
-                          items: availableSuppliers.map((supplier) {
-                            final taxId = supplier.taxId?.trim();
-
-                            return DropdownMenuItem<int>(
-                              value: supplier.id,
-                              child: Text(
-                                taxId?.isNotEmpty == true
-                                    ? '${supplier.name} · $taxId'
-                                    : supplier.name,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            );
-                          }).toList(),
-                          onChanged: (supplierId) {
-                            if (supplierId == null) {
-                              setState(() {
-                                _selectedSupplier = null;
-                              });
-
-                              return;
-                            }
-
-                            Supplier? selectedSupplier;
-
-                            for (final supplier in availableSuppliers) {
-                              if (supplier.id == supplierId) {
-                                selectedSupplier = supplier;
-                                break;
-                              }
-                            }
-
-                            setState(() {
-                              _selectedSupplier = selectedSupplier;
-                            });
-                          },
-                          validator: (supplierId) {
-                            if (supplierId == null) {
-                              return 'Selecciona un proveedor';
-                            }
-
-                            return null;
-                          },
-                        );
+                        setState(() {
+                          _paymentMethod = value;
+                        });
                       },
                     ),
                     const SizedBox(height: 14),
                     TextFormField(
-                      controller: _noteController,
-                      maxLines: 3,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        labelText: 'Nota o referencia',
-                        hintText: 'Ej. Factura 1234, compra de contado...',
-                        prefixIcon: Icon(Icons.notes_outlined),
+                      controller: _discountController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
+                      decoration: const InputDecoration(
+                        labelText: 'Descuento',
+                        hintText: '0.00',
+                        prefixText: r'$ ',
+                        prefixIcon: Icon(Icons.discount_outlined),
+                      ),
+                      onChanged: (_) {
+                        setState(() {});
+                      },
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Escribe el descuento o utiliza 0';
+                        }
+
+                        final discountCents = _tryMoneyTextToCents(value);
+
+                        if (discountCents == null) {
+                          return 'Escribe un descuento válido';
+                        }
+
+                        if (discountCents < 0) {
+                          return 'El descuento no puede ser negativo';
+                        }
+
+                        if (discountCents > _subtotalCents) {
+                          return 'El descuento no puede superar el subtotal';
+                        }
+
+                        return null;
+                      },
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
-                _PurchaseSectionCard(
-                  title: 'Productos comprados',
-                  icon: Icons.inventory_2_outlined,
+                _SaleSectionCard(
+                  title: 'Productos vendidos',
+                  icon: Icons.shopping_cart_outlined,
                   trailing: OutlinedButton.icon(
                     onPressed: () => _openItemSheet(),
                     icon: const Icon(Icons.add),
@@ -189,7 +165,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
                   ),
                   children: [
                     if (_items.isEmpty)
-                      _EmptyPurchaseItems(onAddProduct: () => _openItemSheet())
+                      _EmptySaleItems(onAddProduct: () => _openItemSheet())
                     else
                       Column(
                         children: [
@@ -198,7 +174,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
                             index < _items.length;
                             index++
                           ) ...[
-                            _PurchaseItemCard(
+                            _SaleItemCard(
                               item: _items[index],
                               onEdit: () {
                                 _openItemSheet(
@@ -223,28 +199,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     );
   }
 
-  Future<void> _openCreateSupplier() async {
-    final created = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SupplierFormScreen(database: widget.database),
-      ),
-    );
-
-    if (created != true || !mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Proveedor creado. Ahora puedes seleccionarlo en la lista.',
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openItemSheet({_PurchaseDraftItem? item, int? index}) async {
+  Future<void> _openItemSheet({_SaleDraftItem? item, int? index}) async {
     final excludedProductIds = _items
         .map((currentItem) => currentItem.product.id)
         .toSet();
@@ -253,7 +208,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
       excludedProductIds.remove(item.product.id);
     }
 
-    final result = await showModalBottomSheet<_PurchaseDraftItem>(
+    final result = await showModalBottomSheet<_SaleDraftItem>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -261,7 +216,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
       backgroundColor: Colors.white,
       constraints: const BoxConstraints(maxWidth: 720),
       builder: (_) {
-        return _PurchaseItemSheet(
+        return _SaleItemSheet(
           database: widget.database,
           initialItem: item,
           excludedProductIds: excludedProductIds,
@@ -310,28 +265,26 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     );
   }
 
-  Future<void> _savePurchase() async {
+  Future<void> _saveSale() async {
     final isValid = _formKey.currentState?.validate() ?? false;
 
     if (!isValid) {
       return;
     }
 
-    if (_selectedSupplier == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Selecciona un proveedor.')));
+    if (_items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Agrega al menos un producto a la venta.'),
+        ),
+      );
 
       return;
     }
 
-    if (_items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Agrega al menos un producto a la compra.'),
-        ),
-      );
+    final discountCents = _tryMoneyTextToCents(_discountController.text);
 
+    if (discountCents == null) {
       return;
     }
 
@@ -340,15 +293,16 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     });
 
     try {
-      final purchaseId = await widget.database.createPurchase(
-        supplierId: _selectedSupplier!.id,
-        note: _noteController.text,
+      final saleId = await widget.database.createSale(
+        customerName: _customerNameController.text,
+        paymentMethod: _paymentMethod,
+        discountCents: discountCents,
         items: _items
             .map(
-              (item) => PurchaseLineInput(
+              (item) => SaleLineInput(
                 productId: item.product.id,
                 quantity: item.quantity,
-                unitCostCents: item.unitCostCents,
+                unitPriceCents: item.unitPriceCents,
               ),
             )
             .toList(),
@@ -358,7 +312,7 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
         return;
       }
 
-      Navigator.pop(context, purchaseId);
+      Navigator.pop(context, saleId);
     } catch (error) {
       if (!mounted) {
         return;
@@ -369,35 +323,35 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo registrar la compra: $error')),
+        SnackBar(content: Text('No se pudo registrar la venta: $error')),
       );
     }
   }
 }
 
-class _PurchaseDraftItem {
+class _SaleDraftItem {
   final Product product;
   final int quantity;
-  final int unitCostCents;
+  final int unitPriceCents;
 
-  const _PurchaseDraftItem({
+  const _SaleDraftItem({
     required this.product,
     required this.quantity,
-    required this.unitCostCents,
+    required this.unitPriceCents,
   });
 
   int get subtotalCents {
-    return quantity * unitCostCents;
+    return quantity * unitPriceCents;
   }
 }
 
-class _PurchaseSectionCard extends StatelessWidget {
+class _SaleSectionCard extends StatelessWidget {
   final String title;
   final IconData icon;
   final Widget? trailing;
   final List<Widget> children;
 
-  const _PurchaseSectionCard({
+  const _SaleSectionCard({
     required this.title,
     required this.icon,
     required this.children,
@@ -420,10 +374,10 @@ class _PurchaseSectionCard extends StatelessWidget {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFECFDF3),
+                    color: const Color(0xFFFFF7ED),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(icon, color: const Color(0xFF15803D)),
+                  child: Icon(icon, color: const Color(0xFFC2410C)),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -446,10 +400,10 @@ class _PurchaseSectionCard extends StatelessWidget {
   }
 }
 
-class _EmptyPurchaseItems extends StatelessWidget {
+class _EmptySaleItems extends StatelessWidget {
   final VoidCallback onAddProduct;
 
-  const _EmptyPurchaseItems({required this.onAddProduct});
+  const _EmptySaleItems({required this.onAddProduct});
 
   @override
   Widget build(BuildContext context) {
@@ -467,26 +421,25 @@ class _EmptyPurchaseItems extends StatelessWidget {
             width: 70,
             height: 70,
             decoration: const BoxDecoration(
-              color: Color(0xFFECFDF3),
+              color: Color(0xFFFFF7ED),
               shape: BoxShape.circle,
             ),
             child: const Icon(
               Icons.add_shopping_cart_outlined,
-              color: Color(0xFF15803D),
+              color: Color(0xFFC2410C),
               size: 34,
             ),
           ),
           const SizedBox(height: 16),
           Text(
-            'Agrega productos a la compra',
+            'Agrega productos a la venta',
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 7),
           Text(
-            'Selecciona un producto, indica la cantidad recibida '
-            'y su costo unitario.',
+            'Selecciona un producto con existencias, indica la cantidad y su precio.',
             style: Theme.of(
               context,
             ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
@@ -504,12 +457,12 @@ class _EmptyPurchaseItems extends StatelessWidget {
   }
 }
 
-class _PurchaseItemCard extends StatelessWidget {
-  final _PurchaseDraftItem item;
+class _SaleItemCard extends StatelessWidget {
+  final _SaleDraftItem item;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
-  const _PurchaseItemCard({
+  const _SaleItemCard({
     required this.item,
     required this.onEdit,
     required this.onRemove,
@@ -533,12 +486,12 @@ class _PurchaseItemCard extends StatelessWidget {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: const Color(0xFFECFDF3),
+              color: const Color(0xFFFFF7ED),
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(
               Icons.inventory_2_outlined,
-              color: Color(0xFF15803D),
+              color: Color(0xFFC2410C),
             ),
           ),
           const SizedBox(width: 14),
@@ -566,13 +519,17 @@ class _PurchaseItemCard extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _ItemInformationChip(
+                    _SaleInformationChip(
                       icon: Icons.numbers_outlined,
                       label: 'Cantidad: ${item.quantity}',
                     ),
-                    _ItemInformationChip(
+                    _SaleInformationChip(
                       icon: Icons.payments_outlined,
-                      label: 'Costo: ${formatCents(item.unitCostCents)}',
+                      label: 'Precio: ${formatCents(item.unitPriceCents)}',
+                    ),
+                    _SaleInformationChip(
+                      icon: Icons.inventory_outlined,
+                      label: 'Stock: ${item.product.currentStock}',
                     ),
                   ],
                 ),
@@ -580,7 +537,7 @@ class _PurchaseItemCard extends StatelessWidget {
                 Text(
                   'Subtotal: ${formatCents(item.subtotalCents)}',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: const Color(0xFF15803D),
+                    color: const Color(0xFFC2410C),
                     fontWeight: FontWeight.w900,
                   ),
                 ),
@@ -630,32 +587,32 @@ class _PurchaseItemCard extends StatelessWidget {
   }
 }
 
-class _ItemInformationChip extends StatelessWidget {
+class _SaleInformationChip extends StatelessWidget {
   final IconData icon;
   final String label;
 
-  const _ItemInformationChip({required this.icon, required this.label});
+  const _SaleInformationChip({required this.icon, required this.label});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
+        color: const Color(0xFFFFF7ED),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: const Color(0xFF1E4E79).withValues(alpha: 0.16),
+          color: const Color(0xFFC2410C).withValues(alpha: 0.16),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 15, color: const Color(0xFF1E4E79)),
+          Icon(icon, size: 15, color: const Color(0xFF9A3412)),
           const SizedBox(width: 6),
           Text(
             label,
             style: const TextStyle(
-              color: Color(0xFF1E4E79),
+              color: Color(0xFF9A3412),
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
@@ -666,13 +623,17 @@ class _ItemInformationChip extends StatelessWidget {
   }
 }
 
-class _PurchaseBottomBar extends StatelessWidget {
+class _SaleBottomBar extends StatelessWidget {
+  final int subtotalCents;
+  final int discountCents;
   final int totalCents;
   final int itemCount;
   final bool isSaving;
   final VoidCallback? onSave;
 
-  const _PurchaseBottomBar({
+  const _SaleBottomBar({
+    required this.subtotalCents,
+    required this.discountCents,
     required this.totalCents,
     required this.itemCount,
     required this.isSaving,
@@ -689,27 +650,33 @@ class _PurchaseBottomBar extends StatelessWidget {
         minimum: const EdgeInsets.all(16),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 560;
+            final isWide = constraints.maxWidth >= 650;
 
-            final totalWidget = Column(
+            final totals = Column(
               crossAxisAlignment: isWide
                   ? CrossAxisAlignment.start
                   : CrossAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '$itemCount '
-                  '${itemCount == 1 ? 'producto' : 'productos'}',
+                  '$itemCount ${itemCount == 1 ? 'producto' : 'productos'}',
                   style: Theme.of(
                     context,
                   ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
+                Text('Subtotal: ${formatCents(subtotalCents)}'),
+                Text(
+                  'Descuento: ${formatCents(discountCents)}',
+                  style: const TextStyle(color: Color(0xFFB45309)),
+                ),
+                const SizedBox(height: 3),
                 Text(
                   'Total: ${formatCents(totalCents)}',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: const Color(0xFF15803D),
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ],
             );
@@ -722,14 +689,14 @@ class _PurchaseBottomBar extends StatelessWidget {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.save_outlined),
-              label: Text(isSaving ? 'Guardando...' : 'Registrar compra'),
+                  : const Icon(Icons.point_of_sale_outlined),
+              label: Text(isSaving ? 'Registrando...' : 'Registrar venta'),
             );
 
             if (isWide) {
               return Row(
                 children: [
-                  Expanded(child: totalWidget),
+                  Expanded(child: totals),
                   const SizedBox(width: 20),
                   saveButton,
                 ],
@@ -739,7 +706,7 @@ class _PurchaseBottomBar extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
-              children: [totalWidget, const SizedBox(height: 12), saveButton],
+              children: [totals, const SizedBox(height: 12), saveButton],
             );
           },
         ),
@@ -748,28 +715,28 @@ class _PurchaseBottomBar extends StatelessWidget {
   }
 }
 
-class _PurchaseItemSheet extends StatefulWidget {
+class _SaleItemSheet extends StatefulWidget {
   final AppDatabase database;
-  final _PurchaseDraftItem? initialItem;
+  final _SaleDraftItem? initialItem;
   final Set<int> excludedProductIds;
 
-  const _PurchaseItemSheet({
+  const _SaleItemSheet({
     required this.database,
     required this.excludedProductIds,
     this.initialItem,
   });
 
   @override
-  State<_PurchaseItemSheet> createState() => _PurchaseItemSheetState();
+  State<_SaleItemSheet> createState() => _SaleItemSheetState();
 }
 
-class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
+class _SaleItemSheetState extends State<_SaleItemSheet> {
   final _formKey = GlobalKey<FormState>();
 
   late final Stream<List<Product>> _productsStream;
 
   final _quantityController = TextEditingController();
-  final _unitCostController = TextEditingController();
+  final _unitPriceController = TextEditingController();
 
   Product? _selectedProduct;
 
@@ -788,7 +755,7 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
     if (initialItem != null) {
       _selectedProduct = initialItem.product;
       _quantityController.text = initialItem.quantity.toString();
-      _unitCostController.text = _centsToMoneyText(initialItem.unitCostCents);
+      _unitPriceController.text = _centsToMoneyText(initialItem.unitPriceCents);
     } else {
       _quantityController.text = '1';
     }
@@ -797,7 +764,8 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
   @override
   void dispose() {
     _quantityController.dispose();
-    _unitCostController.dispose();
+    _unitPriceController.dispose();
+
     super.dispose();
   }
 
@@ -821,8 +789,7 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
             height: 320,
             child: Center(
               child: Text(
-                'No se pudieron cargar los productos: '
-                '${snapshot.error}',
+                'No se pudieron cargar los productos: ${snapshot.error}',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -832,6 +799,7 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
         final availableProducts =
             (snapshot.data ?? [])
                 .where((product) => product.isActive)
+                .where((product) => product.currentStock > 0)
                 .where(
                   (product) =>
                       !widget.excludedProductIds.contains(product.id) ||
@@ -845,7 +813,16 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
               );
 
         if (availableProducts.isEmpty) {
-          return const SizedBox(height: 320, child: _NoAvailableProducts());
+          return const SizedBox(height: 320, child: _NoProductsWithStock());
+        }
+
+        Product? currentSelectedProduct;
+
+        for (final product in availableProducts) {
+          if (product.id == _selectedProduct?.id) {
+            currentSelectedProduct = product;
+            break;
+          }
         }
 
         return SingleChildScrollView(
@@ -864,15 +841,15 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Selecciona el producto recibido y captura '
-                  'su costo de compra.',
+                  'Selecciona un producto con existencias y captura la cantidad vendida.',
                   style: Theme.of(
                     context,
                   ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
                 ),
                 const SizedBox(height: 20),
                 DropdownButtonFormField<int>(
-                  initialValue: _selectedProduct?.id,
+                  key: ValueKey(currentSelectedProduct?.id),
+                  initialValue: currentSelectedProduct?.id,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Producto',
@@ -883,8 +860,7 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
                     return DropdownMenuItem<int>(
                       value: product.id,
                       child: Text(
-                        '${product.name} · '
-                        'Stock ${product.currentStock}',
+                        '${product.name} · Stock ${product.currentStock}',
                         overflow: TextOverflow.ellipsis,
                       ),
                     );
@@ -914,8 +890,9 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
                       _selectedProduct = selectedProduct;
 
                       if (productChanged) {
-                        _unitCostController.text = _centsToMoneyText(
-                          selectedProduct!.purchasePriceCents,
+                        _quantityController.text = '1';
+                        _unitPriceController.text = _centsToMoneyText(
+                          selectedProduct!.salePriceCents,
                         );
                       }
                     });
@@ -928,13 +905,31 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
                     return null;
                   },
                 ),
+                if (_selectedProduct != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      'Existencias disponibles: ${_selectedProduct!.currentStock}',
+                      style: const TextStyle(
+                        color: Color(0xFF1E4E79),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
                 TextFormField(
                   controller: _quantityController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Cantidad recibida',
-                    hintText: 'Ej. 10',
+                    labelText: 'Cantidad vendida',
+                    hintText: 'Ej. 2',
                     prefixIcon: Icon(Icons.numbers_outlined),
                   ),
                   validator: (value) {
@@ -948,34 +943,40 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
                       return 'La cantidad debe ser mayor que cero';
                     }
 
+                    final product = _selectedProduct;
+
+                    if (product != null && quantity > product.currentStock) {
+                      return 'Solo hay ${product.currentStock} unidades disponibles';
+                    }
+
                     return null;
                   },
                 ),
                 const SizedBox(height: 14),
                 TextFormField(
-                  controller: _unitCostController,
+                  controller: _unitPriceController,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
                   decoration: const InputDecoration(
-                    labelText: 'Costo unitario',
+                    labelText: 'Precio unitario',
                     hintText: '0.00',
                     prefixText: r'$ ',
-                    prefixIcon: Icon(Icons.payments_outlined),
+                    prefixIcon: Icon(Icons.sell_outlined),
                   ),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
-                      return 'Escribe el costo unitario';
+                      return 'Escribe el precio unitario';
                     }
 
-                    final costCents = _tryMoneyTextToCents(value);
+                    final priceCents = _tryMoneyTextToCents(value);
 
-                    if (costCents == null) {
-                      return 'Escribe un costo válido';
+                    if (priceCents == null) {
+                      return 'Escribe un precio válido';
                     }
 
-                    if (costCents < 0) {
-                      return 'El costo no puede ser negativo';
+                    if (priceCents < 0) {
+                      return 'El precio no puede ser negativo';
                     }
 
                     return null;
@@ -988,7 +989,7 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
                     onPressed: _saveItem,
                     icon: const Icon(Icons.check),
                     label: Text(
-                      _isEditing ? 'Guardar cambios' : 'Agregar a la compra',
+                      _isEditing ? 'Guardar cambios' : 'Agregar a la venta',
                     ),
                   ),
                 ),
@@ -1009,57 +1010,25 @@ class _PurchaseItemSheetState extends State<_PurchaseItemSheet> {
 
     final quantity = int.parse(_quantityController.text.trim());
 
-    final unitCostCents = _tryMoneyTextToCents(_unitCostController.text);
+    final unitPriceCents = _tryMoneyTextToCents(_unitPriceController.text);
 
-    if (unitCostCents == null) {
+    if (unitPriceCents == null) {
       return;
     }
 
     Navigator.pop(
       context,
-      _PurchaseDraftItem(
+      _SaleDraftItem(
         product: _selectedProduct!,
         quantity: quantity,
-        unitCostCents: unitCostCents,
+        unitPriceCents: unitPriceCents,
       ),
     );
   }
-
-  int? _tryMoneyTextToCents(String value) {
-    var cleaned = value.trim();
-
-    if (cleaned.isEmpty) {
-      return null;
-    }
-
-    cleaned = cleaned.replaceAll(RegExp(r'[^\d,.-]'), '');
-
-    if (cleaned.isEmpty || cleaned == '-' || cleaned == '.') {
-      return null;
-    }
-
-    if (cleaned.contains(',') && !cleaned.contains('.')) {
-      cleaned = cleaned.replaceAll(',', '.');
-    } else {
-      cleaned = cleaned.replaceAll(',', '');
-    }
-
-    final amount = double.tryParse(cleaned);
-
-    if (amount == null) {
-      return null;
-    }
-
-    return (amount * 100).round();
-  }
-
-  String _centsToMoneyText(int cents) {
-    return (cents / 100).toStringAsFixed(2);
-  }
 }
 
-class _NoAvailableProducts extends StatelessWidget {
-  const _NoAvailableProducts();
+class _NoProductsWithStock extends StatelessWidget {
+  const _NoProductsWithStock();
 
   @override
   Widget build(BuildContext context) {
@@ -1076,15 +1045,14 @@ class _NoAvailableProducts extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              'No hay productos disponibles',
+              'No hay productos con existencias',
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 7),
             Text(
-              'Crea productos activos o elimina uno de la compra '
-              'para seleccionarlo nuevamente.',
+              'Registra una compra o ajusta el inventario antes de realizar la venta.',
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
@@ -1097,51 +1065,34 @@ class _NoAvailableProducts extends StatelessWidget {
   }
 }
 
-class _NoActiveSuppliers extends StatelessWidget {
-  final VoidCallback onCreateSupplier;
+int? _tryMoneyTextToCents(String value) {
+  var cleaned = value.trim();
 
-  const _NoActiveSuppliers({required this.onCreateSupplier});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFDE68A)),
-      ),
-      child: Column(
-        children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: Color(0xFFB45309),
-            size: 34,
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'No hay proveedores activos',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF92400E),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Registra o reactiva un proveedor antes de crear '
-            'la compra.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFF92400E)),
-          ),
-          const SizedBox(height: 14),
-          OutlinedButton.icon(
-            onPressed: onCreateSupplier,
-            icon: const Icon(Icons.add_business_outlined),
-            label: const Text('Crear proveedor'),
-          ),
-        ],
-      ),
-    );
+  if (cleaned.isEmpty) {
+    return null;
   }
+
+  cleaned = cleaned.replaceAll(RegExp(r'[^\d,.-]'), '');
+
+  if (cleaned.isEmpty || cleaned == '-' || cleaned == '.' || cleaned == ',') {
+    return null;
+  }
+
+  if (cleaned.contains(',') && !cleaned.contains('.')) {
+    cleaned = cleaned.replaceAll(',', '.');
+  } else {
+    cleaned = cleaned.replaceAll(',', '');
+  }
+
+  final amount = double.tryParse(cleaned);
+
+  if (amount == null) {
+    return null;
+  }
+
+  return (amount * 100).round();
+}
+
+String _centsToMoneyText(int cents) {
+  return (cents / 100).toStringAsFixed(2);
 }

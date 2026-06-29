@@ -49,9 +49,40 @@ class InventoryMovements extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+class Suppliers extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  TextColumn get name => text().withLength(min: 1, max: 150)();
+
+  TextColumn get contactName => text().nullable()();
+
+  TextColumn get phone => text().nullable()();
+
+  TextColumn get email => text().nullable()();
+
+  TextColumn get taxId => text().nullable().unique()();
+
+  TextColumn get address => text().nullable()();
+
+  TextColumn get notes => text().nullable()();
+
+  BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+}
+
 class Purchases extends Table {
   IntColumn get id => integer().autoIncrement()();
 
+  IntColumn get supplierId => integer().nullable().references(
+    Suppliers,
+    #id,
+    onDelete: KeyAction.setNull,
+  )();
+
+  // Copia histórica del nombre al registrar la compra.
   TextColumn get supplierName => text().nullable()();
 
   TextColumn get note => text().nullable()();
@@ -109,6 +140,11 @@ class SaleItems extends Table {
 
   IntColumn get unitPriceCents => integer()();
 
+  // Costo del producto al momento de realizar la venta.
+  // Es nullable porque las ventas anteriores a la migración
+  // no tienen este dato histórico.
+  IntColumn get unitCostCents => integer().nullable()();
+
   IntColumn get subtotalCents => integer()();
 }
 
@@ -160,10 +196,44 @@ class PurchaseItemDetail {
   const PurchaseItemDetail({required this.purchaseItem, required this.product});
 }
 
+class SaleLineInput {
+  final int productId;
+  final int quantity;
+  final int unitPriceCents;
+
+  const SaleLineInput({
+    required this.productId,
+    required this.quantity,
+    required this.unitPriceCents,
+  });
+
+  int get subtotalCents {
+    return quantity * unitPriceCents;
+  }
+}
+
+class SaleItemDetail {
+  final SaleItem saleItem;
+  final Product product;
+
+  const SaleItemDetail({required this.saleItem, required this.product});
+}
+
+class InventoryMovementDetail {
+  final InventoryMovement movement;
+  final Product product;
+
+  const InventoryMovementDetail({
+    required this.movement,
+    required this.product,
+  });
+}
+
 @DriftDatabase(
   tables: [
     Products,
     InventoryMovements,
+    Suppliers,
     Purchases,
     PurchaseItems,
     Sales,
@@ -176,7 +246,30 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 3;
+
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onCreate: (migrator) async {
+        await migrator.createAll();
+      },
+      onUpgrade: (migrator, from, to) async {
+        if (from < 2) {
+          await migrator.createTable(suppliers);
+
+          await migrator.addColumn(purchases, purchases.supplierId);
+        }
+
+        if (from < 3) {
+          await migrator.addColumn(saleItems, saleItems.unitCostCents);
+        }
+      },
+      beforeOpen: (details) async {
+        await customStatement('PRAGMA foreign_keys = ON');
+      },
+    );
+  }
 
   static QueryExecutor _openConnection() {
     return driftDatabase(
@@ -213,6 +306,26 @@ class AppDatabase extends _$AppDatabase {
     return (update(products)..where((tbl) => tbl.id.equals(productId))).write(
       ProductsCompanion(
         isActive: const Value(false),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<int> setProductActive({
+    required int productId,
+    required bool isActive,
+  }) async {
+    final productRows = await (select(
+      products,
+    )..where((tbl) => tbl.id.equals(productId))).get();
+
+    if (productRows.isEmpty) {
+      throw StateError('No se encontró el producto.');
+    }
+
+    return (update(products)..where((tbl) => tbl.id.equals(productId))).write(
+      ProductsCompanion(
+        isActive: Value(isActive),
         updatedAt: Value(DateTime.now()),
       ),
     );
@@ -311,6 +424,176 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // -------------------------
+  // Proveedores
+  // -------------------------
+
+  Stream<List<Supplier>> watchSuppliers({bool includeInactive = false}) {
+    final query = select(suppliers);
+
+    if (!includeInactive) {
+      query.where((tbl) => tbl.isActive.equals(true));
+    }
+
+    query.orderBy([
+      (tbl) => OrderingTerm(expression: tbl.name, mode: OrderingMode.asc),
+    ]);
+
+    return query.watch();
+  }
+
+  Stream<Supplier?> watchSupplierById(int supplierId) {
+    return (select(suppliers)..where((tbl) => tbl.id.equals(supplierId)))
+        .watch()
+        .map((rows) => rows.isEmpty ? null : rows.first);
+  }
+
+  Future<Supplier?> getSupplierById(int supplierId) async {
+    final rows = await (select(
+      suppliers,
+    )..where((tbl) => tbl.id.equals(supplierId))).get();
+
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    return rows.first;
+  }
+
+  Future<bool> supplierTaxIdExists(
+    String taxId, {
+    int? excludeSupplierId,
+  }) async {
+    final cleanTaxId = taxId.trim();
+
+    if (cleanTaxId.isEmpty) {
+      return false;
+    }
+
+    final rows = await (select(
+      suppliers,
+    )..where((tbl) => tbl.taxId.equals(cleanTaxId))).get();
+
+    return rows.any((supplier) => supplier.id != excludeSupplierId);
+  }
+
+  Future<int> createSupplier({
+    required String name,
+    String? contactName,
+    String? phone,
+    String? email,
+    String? taxId,
+    String? address,
+    String? notes,
+  }) async {
+    final cleanName = name.trim();
+    final cleanTaxId = _cleanOptionalText(taxId);
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('El nombre del proveedor es obligatorio.');
+    }
+
+    if (cleanTaxId != null) {
+      final duplicatedTaxId = await supplierTaxIdExists(cleanTaxId);
+
+      if (duplicatedTaxId) {
+        throw StateError(
+          'Ya existe un proveedor con ese RFC o identificador fiscal.',
+        );
+      }
+    }
+
+    return into(suppliers).insert(
+      SuppliersCompanion(
+        name: Value(cleanName),
+        contactName: Value(_cleanOptionalText(contactName)),
+        phone: Value(_cleanOptionalText(phone)),
+        email: Value(_cleanOptionalText(email)),
+        taxId: Value(cleanTaxId),
+        address: Value(_cleanOptionalText(address)),
+        notes: Value(_cleanOptionalText(notes)),
+      ),
+    );
+  }
+
+  Future<int> updateSupplierInfo({
+    required int supplierId,
+    required String name,
+    String? contactName,
+    String? phone,
+    String? email,
+    String? taxId,
+    String? address,
+    String? notes,
+  }) async {
+    final cleanName = name.trim();
+    final cleanTaxId = _cleanOptionalText(taxId);
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('El nombre del proveedor es obligatorio.');
+    }
+
+    final existingSupplier = await getSupplierById(supplierId);
+
+    if (existingSupplier == null) {
+      throw StateError('No se encontró el proveedor.');
+    }
+
+    if (cleanTaxId != null) {
+      final duplicatedTaxId = await supplierTaxIdExists(
+        cleanTaxId,
+        excludeSupplierId: supplierId,
+      );
+
+      if (duplicatedTaxId) {
+        throw StateError(
+          'Ya existe otro proveedor con ese RFC o identificador fiscal.',
+        );
+      }
+    }
+
+    return (update(suppliers)..where((tbl) => tbl.id.equals(supplierId))).write(
+      SuppliersCompanion(
+        name: Value(cleanName),
+        contactName: Value(_cleanOptionalText(contactName)),
+        phone: Value(_cleanOptionalText(phone)),
+        email: Value(_cleanOptionalText(email)),
+        taxId: Value(cleanTaxId),
+        address: Value(_cleanOptionalText(address)),
+        notes: Value(_cleanOptionalText(notes)),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<int> setSupplierActive({
+    required int supplierId,
+    required bool isActive,
+  }) async {
+    final existingSupplier = await getSupplierById(supplierId);
+
+    if (existingSupplier == null) {
+      throw StateError('No se encontró el proveedor.');
+    }
+
+    return (update(suppliers)..where((tbl) => tbl.id.equals(supplierId))).write(
+      SuppliersCompanion(
+        isActive: Value(isActive),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  String? _cleanOptionalText(String? value) {
+    final cleanValue = value?.trim();
+
+    if (cleanValue == null || cleanValue.isEmpty) {
+      return null;
+    }
+
+    return cleanValue;
+  }
+
+  // -------------------------
   // Compras
   // -------------------------
 
@@ -348,7 +631,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<int> createPurchase({
-    String? supplierName,
+    required int supplierId,
     String? note,
     required List<PurchaseLineInput> items,
   }) async {
@@ -374,17 +657,7 @@ class AppDatabase extends _$AppDatabase {
       }
     }
 
-    final cleanSupplierName = supplierName?.trim();
-    final cleanNote = note?.trim();
-
-    final storedSupplierName =
-        cleanSupplierName == null || cleanSupplierName.isEmpty
-        ? null
-        : cleanSupplierName;
-
-    final storedNote = cleanNote == null || cleanNote.isEmpty
-        ? null
-        : cleanNote;
+    final cleanNote = _cleanOptionalText(note);
 
     final totalCents = items.fold<int>(
       0,
@@ -392,10 +665,25 @@ class AppDatabase extends _$AppDatabase {
     );
 
     return transaction(() async {
+      final supplierRows =
+          await (select(suppliers)..where(
+                (tbl) => tbl.id.equals(supplierId) & tbl.isActive.equals(true),
+              ))
+              .get();
+
+      if (supplierRows.isEmpty) {
+        throw StateError(
+          'El proveedor seleccionado no existe o está inactivo.',
+        );
+      }
+
+      final supplier = supplierRows.first;
+
       final purchaseId = await into(purchases).insert(
         PurchasesCompanion(
-          supplierName: Value(storedSupplierName),
-          note: Value(storedNote),
+          supplierId: Value(supplier.id),
+          supplierName: Value(supplier.name),
+          note: Value(cleanNote),
           totalCents: Value(totalCents),
           status: const Value('completed'),
         ),
@@ -413,6 +701,11 @@ class AppDatabase extends _$AppDatabase {
         }
 
         final product = productRows.first;
+
+        if (!product.isActive) {
+          throw StateError('El producto "${product.name}" está inactivo.');
+        }
+
         final newStock = product.currentStock + item.quantity;
 
         await into(purchaseItems).insert(
@@ -441,16 +734,482 @@ class AppDatabase extends _$AppDatabase {
             type: const Value('purchase_entry'),
             quantity: Value(item.quantity),
             stockAfterMovement: Value(newStock),
-            note: Value(
-              storedSupplierName == null
-                  ? 'Entrada por compra #$purchaseId'
-                  : 'Compra #$purchaseId · $storedSupplierName',
-            ),
+            note: Value('Compra #$purchaseId · ${supplier.name}'),
           ),
         );
       }
 
+      await into(cashTransactions).insert(
+        CashTransactionsCompanion(
+          type: const Value('expense'),
+          concept: Value('Compra #$purchaseId'),
+          amountCents: Value(totalCents),
+          note: Value(
+            cleanNote == null
+                ? 'Proveedor: ${supplier.name}'
+                : 'Proveedor: ${supplier.name} · $cleanNote',
+          ),
+        ),
+      );
+
       return purchaseId;
+    });
+  }
+
+  Future<void> cancelPurchase(int purchaseId) async {
+    await transaction(() async {
+      final purchaseRows = await (select(
+        purchases,
+      )..where((tbl) => tbl.id.equals(purchaseId))).get();
+
+      if (purchaseRows.isEmpty) {
+        throw StateError('No se encontró la compra.');
+      }
+
+      final purchase = purchaseRows.first;
+
+      if (purchase.status == 'cancelled') {
+        throw StateError('La compra ya está cancelada.');
+      }
+
+      if (purchase.status != 'completed') {
+        throw StateError('La compra no se encuentra completada.');
+      }
+
+      final itemRows = await (select(
+        purchaseItems,
+      )..where((tbl) => tbl.purchaseId.equals(purchaseId))).get();
+
+      if (itemRows.isEmpty) {
+        throw StateError('La compra no contiene productos.');
+      }
+
+      // Agrupamos cantidades para protegernos incluso si existieran
+      // varias partidas del mismo producto.
+      final quantitiesByProductId = <int, int>{};
+
+      for (final item in itemRows) {
+        quantitiesByProductId.update(
+          item.productId,
+          (quantity) => quantity + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+
+      final productsById = <int, Product>{};
+
+      // Primero validamos todo. Todavía no modificamos el inventario.
+      for (final entry in quantitiesByProductId.entries) {
+        final productRows = await (select(
+          products,
+        )..where((tbl) => tbl.id.equals(entry.key))).get();
+
+        if (productRows.isEmpty) {
+          throw StateError('No se encontró el producto con ID ${entry.key}.');
+        }
+
+        final product = productRows.first;
+        final quantityToRemove = entry.value;
+
+        if (product.currentStock < quantityToRemove) {
+          throw StateError(
+            'No se puede cancelar la compra porque '
+            '"${product.name}" solo tiene ${product.currentStock} '
+            'unidades disponibles y se necesitan '
+            '$quantityToRemove.',
+          );
+        }
+
+        productsById[product.id] = product;
+      }
+
+      final supplierName = purchase.supplierName?.trim();
+
+      final movementNote = supplierName != null && supplierName.isNotEmpty
+          ? 'Cancelación compra #$purchaseId · $supplierName'
+          : 'Cancelación compra #$purchaseId';
+
+      await into(cashTransactions).insert(
+        CashTransactionsCompanion(
+          type: const Value('income'),
+          concept: Value('Cancelación compra #$purchaseId'),
+          amountCents: Value(purchase.totalCents),
+          note: Value(
+            purchase.supplierName == null
+                ? 'Reembolso de compra'
+                : 'Reembolso de ${purchase.supplierName}',
+          ),
+        ),
+      );
+
+      // Después de validar todos los productos, hacemos los cambios.
+      for (final entry in quantitiesByProductId.entries) {
+        final product = productsById[entry.key]!;
+        final quantityToRemove = entry.value;
+        final newStock = product.currentStock - quantityToRemove;
+
+        await (update(
+          products,
+        )..where((tbl) => tbl.id.equals(product.id))).write(
+          ProductsCompanion(
+            currentStock: Value(newStock),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+        await into(inventoryMovements).insert(
+          InventoryMovementsCompanion(
+            productId: Value(product.id),
+            type: const Value('purchase_cancellation'),
+            quantity: Value(-quantityToRemove),
+            stockAfterMovement: Value(newStock),
+            note: Value(movementNote),
+          ),
+        );
+      }
+
+      await (update(purchases)..where((tbl) => tbl.id.equals(purchaseId)))
+          .write(PurchasesCompanion(status: const Value('cancelled')));
+    });
+  }
+
+  // -------------------------
+  // Ventas
+  // -------------------------
+
+  Stream<List<Sale>> watchAllSales() {
+    return (select(sales)..orderBy([
+          (tbl) =>
+              OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc),
+        ]))
+        .watch();
+  }
+
+  Stream<Sale?> watchSaleById(int saleId) {
+    return (select(sales)..where((tbl) => tbl.id.equals(saleId))).watch().map(
+      (rows) => rows.isEmpty ? null : rows.first,
+    );
+  }
+
+  Stream<List<SaleItemDetail>> watchSaleItemsWithProducts(int saleId) {
+    final query = select(
+      saleItems,
+    ).join([innerJoin(products, products.id.equalsExp(saleItems.productId))]);
+
+    query.where(saleItems.saleId.equals(saleId));
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return SaleItemDetail(
+          saleItem: row.readTable(saleItems),
+          product: row.readTable(products),
+        );
+      }).toList();
+    });
+  }
+
+  Future<int> createSale({
+    String? customerName,
+    required String paymentMethod,
+    int discountCents = 0,
+    required List<SaleLineInput> items,
+  }) async {
+    if (items.isEmpty) {
+      throw ArgumentError('La venta debe contener al menos un producto.');
+    }
+
+    final cleanPaymentMethod = paymentMethod.trim().toLowerCase();
+
+    const allowedPaymentMethods = {'cash', 'card', 'transfer', 'mixed'};
+
+    if (!allowedPaymentMethods.contains(cleanPaymentMethod)) {
+      throw ArgumentError('El método de pago seleccionado no es válido.');
+    }
+
+    if (discountCents < 0) {
+      throw ArgumentError('El descuento no puede ser negativo.');
+    }
+
+    final productIds = <int>{};
+
+    for (final item in items) {
+      if (item.quantity <= 0) {
+        throw ArgumentError('Todas las cantidades deben ser mayores que cero.');
+      }
+
+      if (item.unitPriceCents < 0) {
+        throw ArgumentError('El precio de venta no puede ser negativo.');
+      }
+
+      if (!productIds.add(item.productId)) {
+        throw ArgumentError(
+          'El mismo producto no puede aparecer dos veces en la venta.',
+        );
+      }
+    }
+
+    final subtotalCents = items.fold<int>(
+      0,
+      (total, item) => total + item.subtotalCents,
+    );
+
+    if (discountCents > subtotalCents) {
+      throw ArgumentError('El descuento no puede ser mayor que el subtotal.');
+    }
+
+    final totalCents = subtotalCents - discountCents;
+    final cleanCustomerName = _cleanOptionalText(customerName);
+
+    return transaction(() async {
+      final productsById = <int, Product>{};
+
+      // Primero se valida toda la venta.
+      // Todavía no se modifica el inventario.
+      for (final item in items) {
+        final productRows = await (select(
+          products,
+        )..where((tbl) => tbl.id.equals(item.productId))).get();
+
+        if (productRows.isEmpty) {
+          throw StateError(
+            'No se encontró el producto con ID ${item.productId}.',
+          );
+        }
+
+        final product = productRows.first;
+
+        if (!product.isActive) {
+          throw StateError('El producto "${product.name}" está inactivo.');
+        }
+
+        if (product.currentStock < item.quantity) {
+          throw StateError(
+            'No hay suficiente stock de "${product.name}". '
+            'Disponible: ${product.currentStock}. '
+            'Solicitado: ${item.quantity}.',
+          );
+        }
+
+        productsById[product.id] = product;
+      }
+
+      final saleId = await into(sales).insert(
+        SalesCompanion(
+          customerName: Value(cleanCustomerName),
+          subtotalCents: Value(subtotalCents),
+          discountCents: Value(discountCents),
+          totalCents: Value(totalCents),
+          paymentMethod: Value(cleanPaymentMethod),
+          status: const Value('completed'),
+        ),
+      );
+
+      for (final item in items) {
+        final product = productsById[item.productId]!;
+        final newStock = product.currentStock - item.quantity;
+
+        await into(saleItems).insert(
+          SaleItemsCompanion(
+            saleId: Value(saleId),
+            productId: Value(item.productId),
+            quantity: Value(item.quantity),
+            unitPriceCents: Value(item.unitPriceCents),
+            unitCostCents: Value(product.purchasePriceCents),
+            subtotalCents: Value(item.subtotalCents),
+          ),
+        );
+
+        await (update(
+          products,
+        )..where((tbl) => tbl.id.equals(item.productId))).write(
+          ProductsCompanion(
+            currentStock: Value(newStock),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+        final movementNote = cleanCustomerName == null
+            ? 'Salida por venta #$saleId'
+            : 'Venta #$saleId · $cleanCustomerName';
+
+        await into(inventoryMovements).insert(
+          InventoryMovementsCompanion(
+            productId: Value(item.productId),
+            type: const Value('sale_exit'),
+            quantity: Value(-item.quantity),
+            stockAfterMovement: Value(newStock),
+            note: Value(movementNote),
+          ),
+        );
+      }
+
+      final paymentMethodLabel = switch (cleanPaymentMethod) {
+        'cash' => 'Efectivo',
+        'card' => 'Tarjeta',
+        'transfer' => 'Transferencia',
+        'mixed' => 'Pago mixto',
+        _ => cleanPaymentMethod,
+      };
+
+      await into(cashTransactions).insert(
+        CashTransactionsCompanion(
+          type: const Value('income'),
+          concept: Value('Venta #$saleId · $paymentMethodLabel'),
+          amountCents: Value(totalCents),
+          note: Value(cleanCustomerName),
+        ),
+      );
+
+      return saleId;
+    });
+  }
+
+  Future<void> cancelSale(int saleId) async {
+    await transaction(() async {
+      final saleRows = await (select(
+        sales,
+      )..where((tbl) => tbl.id.equals(saleId))).get();
+
+      if (saleRows.isEmpty) {
+        throw StateError('No se encontró la venta.');
+      }
+
+      final sale = saleRows.first;
+
+      if (sale.status == 'cancelled') {
+        throw StateError('La venta ya está cancelada.');
+      }
+
+      if (sale.status != 'completed') {
+        throw StateError('La venta no se encuentra completada.');
+      }
+
+      final itemRows = await (select(
+        saleItems,
+      )..where((tbl) => tbl.saleId.equals(saleId))).get();
+
+      if (itemRows.isEmpty) {
+        throw StateError('La venta no contiene productos.');
+      }
+
+      // Agrupamos las cantidades por producto para protegernos
+      // incluso si existieran partidas repetidas.
+      final quantitiesByProductId = <int, int>{};
+
+      for (final item in itemRows) {
+        quantitiesByProductId.update(
+          item.productId,
+          (quantity) => quantity + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+
+      final productsById = <int, Product>{};
+
+      // Validamos que todos los productos sigan existiendo.
+      for (final productId in quantitiesByProductId.keys) {
+        final productRows = await (select(
+          products,
+        )..where((tbl) => tbl.id.equals(productId))).get();
+
+        if (productRows.isEmpty) {
+          throw StateError('No se encontró el producto con ID $productId.');
+        }
+
+        final product = productRows.first;
+
+        productsById[product.id] = product;
+      }
+
+      final customerName = sale.customerName?.trim();
+
+      final movementNote = customerName != null && customerName.isNotEmpty
+          ? 'Cancelación venta #$saleId · $customerName'
+          : 'Cancelación venta #$saleId';
+
+      for (final entry in quantitiesByProductId.entries) {
+        final product = productsById[entry.key]!;
+        final quantityToReturn = entry.value;
+        final newStock = product.currentStock + quantityToReturn;
+
+        await (update(
+          products,
+        )..where((tbl) => tbl.id.equals(product.id))).write(
+          ProductsCompanion(
+            currentStock: Value(newStock),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+        await into(inventoryMovements).insert(
+          InventoryMovementsCompanion(
+            productId: Value(product.id),
+            type: const Value('sale_cancellation'),
+            quantity: Value(quantityToReturn),
+            stockAfterMovement: Value(newStock),
+            note: Value(movementNote),
+          ),
+        );
+      }
+
+      await into(cashTransactions).insert(
+        CashTransactionsCompanion(
+          type: const Value('expense'),
+          concept: Value('Cancelación venta #$saleId'),
+          amountCents: Value(sale.totalCents),
+          note: Value(
+            customerName != null && customerName.isNotEmpty
+                ? 'Devolución a $customerName'
+                : 'Devolución a público general',
+          ),
+        ),
+      );
+
+      await (update(sales)..where((tbl) => tbl.id.equals(saleId))).write(
+        const SalesCompanion(status: Value('cancelled')),
+      );
+    });
+  }
+
+  // -------------------------
+  // Inventario
+  // -------------------------
+
+  Stream<List<Product>> watchInventoryProducts({bool includeInactive = true}) {
+    final query = select(products);
+
+    if (!includeInactive) {
+      query.where((tbl) => tbl.isActive.equals(true));
+    }
+
+    query.orderBy([
+      (tbl) =>
+          OrderingTerm(expression: tbl.currentStock, mode: OrderingMode.asc),
+      (tbl) => OrderingTerm(expression: tbl.name, mode: OrderingMode.asc),
+    ]);
+
+    return query.watch();
+  }
+
+  Stream<List<InventoryMovementDetail>> watchAllInventoryMovements() {
+    final query = select(inventoryMovements).join([
+      innerJoin(products, products.id.equalsExp(inventoryMovements.productId)),
+    ]);
+
+    query.orderBy([
+      OrderingTerm(
+        expression: inventoryMovements.createdAt,
+        mode: OrderingMode.desc,
+      ),
+    ]);
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return InventoryMovementDetail(
+          movement: row.readTable(inventoryMovements),
+          product: row.readTable(products),
+        );
+      }).toList();
     });
   }
 
@@ -458,15 +1217,109 @@ class AppDatabase extends _$AppDatabase {
   // Gastos
   // -------------------------
 
-  Future<int> insertExpense(ExpensesCompanion expense) {
-    return into(expenses).insert(expense);
-  }
-
-  Stream<List<Expense>> watchExpenses() {
+  Stream<List<Expense>> watchAllExpenses() {
     return (select(expenses)..orderBy([
           (tbl) =>
               OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc),
         ]))
         .watch();
+  }
+
+  Stream<Expense?> watchExpenseById(int expenseId) {
+    return (select(expenses)..where((tbl) => tbl.id.equals(expenseId)))
+        .watch()
+        .map((rows) => rows.isEmpty ? null : rows.first);
+  }
+
+  Future<int> createExpense({
+    required String category,
+    String? description,
+    required int amountCents,
+  }) async {
+    final cleanCategory = category.trim();
+    final cleanDescription = _cleanOptionalText(description);
+
+    if (cleanCategory.isEmpty) {
+      throw ArgumentError('La categoría del gasto es obligatoria.');
+    }
+
+    if (cleanCategory.length > 80) {
+      throw ArgumentError('La categoría no puede superar los 80 caracteres.');
+    }
+
+    if (amountCents <= 0) {
+      throw ArgumentError('El importe del gasto debe ser mayor que cero.');
+    }
+
+    return transaction(() async {
+      final expenseId = await into(expenses).insert(
+        ExpensesCompanion(
+          category: Value(cleanCategory),
+          description: Value(cleanDescription),
+          amountCents: Value(amountCents),
+        ),
+      );
+
+      await into(cashTransactions).insert(
+        CashTransactionsCompanion(
+          type: const Value('expense'),
+          concept: Value('Gasto · $cleanCategory'),
+          amountCents: Value(amountCents),
+          note: Value(cleanDescription),
+        ),
+      );
+
+      return expenseId;
+    });
+  }
+
+  // -------------------------
+  // Movimientos de caja
+  // -------------------------
+
+  Stream<List<CashTransaction>> watchAllCashTransactions() {
+    return (select(cashTransactions)..orderBy([
+          (tbl) =>
+              OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc),
+        ]))
+        .watch();
+  }
+
+  Future<int> createCashTransaction({
+    required String type,
+    required String concept,
+    required int amountCents,
+    String? note,
+  }) async {
+    final cleanType = type.trim().toLowerCase();
+    final cleanConcept = concept.trim();
+    final cleanNote = _cleanOptionalText(note);
+
+    const allowedTypes = {'income', 'expense'};
+
+    if (!allowedTypes.contains(cleanType)) {
+      throw ArgumentError('El tipo de movimiento de caja no es válido.');
+    }
+
+    if (cleanConcept.isEmpty) {
+      throw ArgumentError('El concepto es obligatorio.');
+    }
+
+    if (cleanConcept.length > 120) {
+      throw ArgumentError('El concepto no puede superar los 120 caracteres.');
+    }
+
+    if (amountCents <= 0) {
+      throw ArgumentError('El importe debe ser mayor que cero.');
+    }
+
+    return into(cashTransactions).insert(
+      CashTransactionsCompanion(
+        type: Value(cleanType),
+        concept: Value(cleanConcept),
+        amountCents: Value(amountCents),
+        note: Value(cleanNote),
+      ),
+    );
   }
 }

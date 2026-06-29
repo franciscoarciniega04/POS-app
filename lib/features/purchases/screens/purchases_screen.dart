@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../data/local/app_database.dart';
 import '../../../shared/utils/money_formatter.dart';
 import 'purchase_form_screen.dart';
+import 'purchase_detail_screen.dart';
 
 class PurchasesScreen extends StatefulWidget {
   final AppDatabase database;
@@ -143,10 +144,12 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   }
 
   void _openPurchaseDetail(Purchase purchase) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Después construiremos el detalle de la compra #${purchase.id}.',
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PurchaseDetailScreen(
+          database: widget.database,
+          purchaseId: purchase.id,
         ),
       ),
     );

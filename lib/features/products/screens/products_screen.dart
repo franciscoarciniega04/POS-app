@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../data/local/app_database.dart';
 import '../../../shared/utils/money_formatter.dart';
-import 'product_form_screen.dart';
 import 'product_detail_screen.dart';
+import 'product_form_screen.dart';
+
+enum _ProductFilter { active, inactive, all }
 
 class ProductsScreen extends StatefulWidget {
   final AppDatabase database;
@@ -16,6 +18,7 @@ class ProductsScreen extends StatefulWidget {
 
 class _ProductsScreenState extends State<ProductsScreen> {
   String _searchText = '';
+  _ProductFilter _selectedFilter = _ProductFilter.active;
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +36,14 @@ class _ProductsScreenState extends State<ProductsScreen> {
       ),
       body: Column(
         children: [
+          _ProductFilters(
+            selectedFilter: _selectedFilter,
+            onChanged: (filter) {
+              setState(() {
+                _selectedFilter = filter;
+              });
+            },
+          ),
           _SearchBox(
             onChanged: (value) {
               setState(() {
@@ -44,38 +55,48 @@ class _ProductsScreenState extends State<ProductsScreen> {
             child: StreamBuilder<List<Product>>(
               stream: widget.database.watchAllProducts(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
                 if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
+                  return Center(
+                    child: Text(
+                      'No fue posible cargar los productos: ${snapshot.error}',
+                      textAlign: TextAlign.center,
+                    ),
+                  );
                 }
 
                 final products = snapshot.data ?? [];
 
-                final activeProducts = products
-                    .where((product) => product.isActive)
+                final filteredProducts = products
+                    .where(_matchesSelectedFilter)
                     .where(_matchesSearch)
                     .toList();
 
-                if (activeProducts.isEmpty) {
+                if (filteredProducts.isEmpty) {
                   return _EmptyProductsState(
                     hasSearchText: _searchText.isNotEmpty,
+                    selectedFilter: _selectedFilter,
+                    hasAnyProducts: products.isNotEmpty,
                     onCreateProduct: _openCreateProductScreen,
                   );
                 }
 
                 return ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                  itemCount: activeProducts.length,
+                  itemCount: filteredProducts.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
-                    final product = activeProducts[index];
+                    final product = filteredProducts[index];
 
                     return _ProductCard(
                       product: product,
-                      onDeactivate: () => _confirmDeactivate(product),
+                      onToggleStatus: () {
+                        _confirmToggleProductStatus(product);
+                      },
                       onTap: () {
                         Navigator.push(
                           context,
@@ -98,16 +119,32 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 
+  bool _matchesSelectedFilter(Product product) {
+    switch (_selectedFilter) {
+      case _ProductFilter.active:
+        return product.isActive;
+      case _ProductFilter.inactive:
+        return !product.isActive;
+      case _ProductFilter.all:
+        return true;
+    }
+  }
+
   bool _matchesSearch(Product product) {
-    if (_searchText.isEmpty) return true;
+    if (_searchText.isEmpty) {
+      return true;
+    }
 
-    final name = product.name.toLowerCase();
-    final sku = product.sku?.toLowerCase() ?? '';
-    final barcode = product.barcode?.toLowerCase() ?? '';
+    final searchableValues = [
+      product.name,
+      product.sku ?? '',
+      product.barcode ?? '',
+      product.description ?? '',
+    ];
 
-    return name.contains(_searchText) ||
-        sku.contains(_searchText) ||
-        barcode.contains(_searchText);
+    return searchableValues.any(
+      (value) => value.toLowerCase().contains(_searchText),
+    );
   }
 
   Future<void> _openCreateProductScreen() async {
@@ -125,38 +162,126 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
-  Future<void> _confirmDeactivate(Product product) async {
-    final shouldDeactivate = await showDialog<bool>(
+  Future<void> _confirmToggleProductStatus(Product product) async {
+    final willActivate = !product.isActive;
+
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Desactivar producto'),
+          icon: Icon(
+            willActivate ? Icons.refresh_outlined : Icons.warning_amber_rounded,
+            color: willActivate
+                ? const Color(0xFF15803D)
+                : const Color(0xFFB45309),
+          ),
+          title: Text(
+            willActivate ? 'Reactivar producto' : 'Desactivar producto',
+          ),
           content: Text(
-            '¿Quieres desactivar "${product.name}"? No se borrará su historial.',
+            willActivate
+                ? '¿Quieres volver a activar "${product.name}"? Volverá a estar disponible para compras y ventas.'
+                : '¿Quieres desactivar "${product.name}"? Ya no podrá seleccionarse en compras o ventas nuevas, pero conservará todo su historial.',
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
               child: const Text('Cancelar'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Desactivar'),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: Text(willActivate ? 'Reactivar' : 'Desactivar'),
             ),
           ],
         );
       },
     );
 
-    if (shouldDeactivate != true) return;
+    if (confirmed != true) {
+      return;
+    }
 
-    await widget.database.deactivateProduct(product.id);
+    try {
+      await widget.database.setProductActive(
+        productId: product.id,
+        isActive: willActivate,
+      );
 
-    if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('${product.name} fue desactivado.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            willActivate
+                ? '${product.name} fue reactivado.'
+                : '${product.name} fue desactivado.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo cambiar el estado del producto: $error'),
+        ),
+      );
+    }
+  }
+}
+
+class _ProductFilters extends StatelessWidget {
+  final _ProductFilter selectedFilter;
+  final ValueChanged<_ProductFilter> onChanged;
+
+  const _ProductFilters({
+    required this.selectedFilter,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              label: const Text('Activos'),
+              selected: selectedFilter == _ProductFilter.active,
+              onSelected: (_) {
+                onChanged(_ProductFilter.active);
+              },
+            ),
+            ChoiceChip(
+              label: const Text('Inactivos'),
+              selected: selectedFilter == _ProductFilter.inactive,
+              onSelected: (_) {
+                onChanged(_ProductFilter.inactive);
+              },
+            ),
+            ChoiceChip(
+              label: const Text('Todos'),
+              selected: selectedFilter == _ProductFilter.all,
+              onSelected: (_) {
+                onChanged(_ProductFilter.all);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -189,17 +314,21 @@ class _SearchBox extends StatelessWidget {
 class _ProductCard extends StatelessWidget {
   final Product product;
   final VoidCallback onTap;
-  final VoidCallback onDeactivate;
+  final VoidCallback onToggleStatus;
 
   const _ProductCard({
     required this.product,
     required this.onTap,
-    required this.onDeactivate,
+    required this.onToggleStatus,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isLowStock = product.currentStock <= product.minStock;
+    final isLowStock =
+        product.isActive && product.currentStock <= product.minStock;
+
+    final hasSku = product.sku?.trim().isNotEmpty == true;
+    final hasBarcode = product.barcode?.trim().isNotEmpty == true;
 
     return Card(
       color: Colors.white,
@@ -210,17 +339,22 @@ class _ProductCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 width: 54,
                 height: 54,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFEEF2FF),
+                  color: product.isActive
+                      ? const Color(0xFFEEF2FF)
+                      : const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.inventory_2_outlined,
-                  color: Color(0xFF4338CA),
+                  color: product.isActive
+                      ? const Color(0xFF4338CA)
+                      : const Color(0xFF64748B),
                 ),
               ),
               const SizedBox(width: 14),
@@ -228,25 +362,34 @@ class _ProductCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      product.name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            product.name,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        if (!product.isActive) ...[
+                          const SizedBox(width: 8),
+                          const _InactiveProductChip(),
+                        ],
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        if (product.sku != null && product.sku!.isNotEmpty)
-                          'SKU: ${product.sku}',
-                        if (product.barcode != null &&
-                            product.barcode!.isNotEmpty)
-                          'Código: ${product.barcode}',
-                      ].join(' · '),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey.shade700,
+                    if (hasSku || hasBarcode) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        [
+                          if (hasSku) 'SKU: ${product.sku}',
+                          if (hasBarcode) 'Código: ${product.barcode}',
+                        ].join(' · '),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade700,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
@@ -255,11 +398,13 @@ class _ProductCard extends StatelessWidget {
                         _InfoChip(
                           icon: Icons.sell_outlined,
                           label: formatCents(product.salePriceCents),
+                          muted: !product.isActive,
                         ),
                         _InfoChip(
                           icon: Icons.inventory_outlined,
                           label: 'Stock: ${product.currentStock}',
                           danger: isLowStock,
+                          muted: !product.isActive,
                         ),
                       ],
                     ),
@@ -267,16 +412,30 @@ class _ProductCard extends StatelessWidget {
                 ),
               ),
               PopupMenuButton<String>(
+                tooltip: 'Opciones',
                 onSelected: (value) {
-                  if (value == 'deactivate') {
-                    onDeactivate();
+                  if (value == 'toggle-status') {
+                    onToggleStatus();
                   }
                 },
-                itemBuilder: (context) {
-                  return const [
+                itemBuilder: (_) {
+                  return [
                     PopupMenuItem(
-                      value: 'deactivate',
-                      child: Text('Desactivar'),
+                      value: 'toggle-status',
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          product.isActive
+                              ? Icons.block_outlined
+                              : Icons.refresh_outlined,
+                          color: product.isActive
+                              ? const Color(0xFFB45309)
+                              : const Color(0xFF15803D),
+                        ),
+                        title: Text(
+                          product.isActive ? 'Desactivar' : 'Reactivar',
+                        ),
+                      ),
                     ),
                   ];
                 },
@@ -289,26 +448,57 @@ class _ProductCard extends StatelessWidget {
   }
 }
 
+class _InactiveProductChip extends StatelessWidget {
+  const _InactiveProductChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Text(
+        'Inactivo',
+        style: TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoChip extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool danger;
+  final bool muted;
 
   const _InfoChip({
     required this.icon,
     required this.label,
     this.danger = false,
+    this.muted = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = danger
-        ? const Color(0xFFFFE4E6)
-        : const Color(0xFFEFF6FF);
+    final Color backgroundColor;
+    final Color foregroundColor;
 
-    final foregroundColor = danger
-        ? const Color(0xFFBE123C)
-        : const Color(0xFF1E4E79);
+    if (muted) {
+      backgroundColor = const Color(0xFFF1F5F9);
+      foregroundColor = const Color(0xFF64748B);
+    } else if (danger) {
+      backgroundColor = const Color(0xFFFFE4E6);
+      foregroundColor = const Color(0xFFBE123C);
+    } else {
+      backgroundColor = const Color(0xFFEFF6FF);
+      foregroundColor = const Color(0xFF1E4E79);
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -338,15 +528,22 @@ class _InfoChip extends StatelessWidget {
 
 class _EmptyProductsState extends StatelessWidget {
   final bool hasSearchText;
+  final _ProductFilter selectedFilter;
+  final bool hasAnyProducts;
   final VoidCallback onCreateProduct;
 
   const _EmptyProductsState({
     required this.hasSearchText,
+    required this.selectedFilter,
+    required this.hasAnyProducts,
     required this.onCreateProduct,
   });
 
   @override
   Widget build(BuildContext context) {
+    final title = _title;
+    final message = _message;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
@@ -362,9 +559,7 @@ class _EmptyProductsState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              hasSearchText
-                  ? 'No encontramos productos'
-                  : 'Todavía no tienes productos',
+              title,
               style: Theme.of(
                 context,
               ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
@@ -372,15 +567,13 @@ class _EmptyProductsState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              hasSearchText
-                  ? 'Prueba con otro nombre, SKU o código de barras.'
-                  : 'Agrega tu primer producto para comenzar a vender y controlar inventario.',
+              message,
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
               textAlign: TextAlign.center,
             ),
-            if (!hasSearchText) ...[
+            if (!hasAnyProducts && !hasSearchText) ...[
               const SizedBox(height: 20),
               FilledButton.icon(
                 onPressed: onCreateProduct,
@@ -392,5 +585,43 @@ class _EmptyProductsState extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String get _title {
+    if (hasSearchText) {
+      return 'No encontramos productos';
+    }
+
+    if (!hasAnyProducts) {
+      return 'Todavía no tienes productos';
+    }
+
+    switch (selectedFilter) {
+      case _ProductFilter.active:
+        return 'No hay productos activos';
+      case _ProductFilter.inactive:
+        return 'No hay productos inactivos';
+      case _ProductFilter.all:
+        return 'No hay productos para mostrar';
+    }
+  }
+
+  String get _message {
+    if (hasSearchText) {
+      return 'Prueba con otro nombre, SKU o código de barras.';
+    }
+
+    if (!hasAnyProducts) {
+      return 'Agrega tu primer producto para comenzar a vender y controlar inventario.';
+    }
+
+    switch (selectedFilter) {
+      case _ProductFilter.active:
+        return 'Reactiva un producto o crea uno nuevo para verlo aquí.';
+      case _ProductFilter.inactive:
+        return 'Los productos que desactives aparecerán en esta sección.';
+      case _ProductFilter.all:
+        return 'No hay productos disponibles con el filtro actual.';
+    }
   }
 }

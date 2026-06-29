@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import '../data/local/app_database.dart';
 import '../features/products/screens/products_screen.dart';
 import '../features/purchases/screens/purchases_screen.dart';
+import '../features/suppliers/screens/suppliers_screen.dart';
+import '../features/sales/screens/sales_screen.dart';
+import '../features/inventory/screens/inventory_screen.dart';
+import '../features/expenses/screens/expenses_screen.dart';
+import '../features/cash/screens/cash_screen.dart';
 
 class PosApp extends StatelessWidget {
   final AppDatabase database;
@@ -60,6 +65,21 @@ class HomeScreen extends StatelessWidget {
         },
       ),
       _HomeModule(
+        title: 'Proveedores',
+        subtitle: 'Catálogo y datos de contacto',
+        icon: Icons.local_shipping_outlined,
+        iconColor: const Color(0xFF0F766E),
+        iconBackgroundColor: const Color(0xFFF0FDFA),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SuppliersScreen(database: database),
+            ),
+          );
+        },
+      ),
+      _HomeModule(
         title: 'Compras',
         subtitle: 'Entradas de inventario',
         icon: Icons.shopping_cart_checkout_outlined,
@@ -80,7 +100,12 @@ class HomeScreen extends StatelessWidget {
         icon: Icons.point_of_sale_outlined,
         iconColor: const Color(0xFFC2410C),
         iconBackgroundColor: const Color(0xFFFFF7ED),
-        onTap: () {},
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => SalesScreen(database: database)),
+          );
+        },
       ),
       _HomeModule(
         title: 'Inventario',
@@ -88,7 +113,14 @@ class HomeScreen extends StatelessWidget {
         icon: Icons.warehouse_outlined,
         iconColor: const Color(0xFF475569),
         iconBackgroundColor: const Color(0xFFF1F5F9),
-        onTap: () {},
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InventoryScreen(database: database),
+            ),
+          );
+        },
       ),
       _HomeModule(
         title: 'Gastos',
@@ -96,7 +128,27 @@ class HomeScreen extends StatelessWidget {
         icon: Icons.receipt_long_outlined,
         iconColor: const Color(0xFFBE123C),
         iconBackgroundColor: const Color(0xFFFFF1F2),
-        onTap: () {},
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ExpensesScreen(database: database),
+            ),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Caja',
+        subtitle: 'Ingresos, egresos y saldo',
+        icon: Icons.account_balance_wallet_outlined,
+        iconColor: const Color(0xFF15803D),
+        iconBackgroundColor: const Color(0xFFECFDF3),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => CashScreen(database: database)),
+          );
+        },
       ),
       _HomeModule(
         title: 'Reportes',
