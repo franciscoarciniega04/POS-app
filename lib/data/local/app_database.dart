@@ -140,9 +140,6 @@ class SaleItems extends Table {
 
   IntColumn get unitPriceCents => integer()();
 
-  // Costo del producto al momento de realizar la venta.
-  // Es nullable porque las ventas anteriores a la migración
-  // no tienen este dato histórico.
   IntColumn get unitCostCents => integer().nullable()();
 
   IntColumn get subtotalCents => integer()();
@@ -227,6 +224,72 @@ class InventoryMovementDetail {
     required this.movement,
     required this.product,
   });
+}
+
+class BusinessReportSummary {
+  final int completedSalesCount;
+  final int cancelledSalesCount;
+  final int salesTotalCents;
+  final int discountsCents;
+  final int costOfGoodsSoldCents;
+  final int expensesCents;
+  final int soldUnits;
+  final int salesWithoutHistoricalCost;
+
+  const BusinessReportSummary({
+    required this.completedSalesCount,
+    required this.cancelledSalesCount,
+    required this.salesTotalCents,
+    required this.discountsCents,
+    required this.costOfGoodsSoldCents,
+    required this.expensesCents,
+    required this.soldUnits,
+    required this.salesWithoutHistoricalCost,
+  });
+
+  int get grossProfitCents {
+    return salesTotalCents - costOfGoodsSoldCents;
+  }
+
+  int get netProfitCents {
+    return grossProfitCents - expensesCents;
+  }
+
+  int get averageTicketCents {
+    if (completedSalesCount == 0) {
+      return 0;
+    }
+
+    return salesTotalCents ~/ completedSalesCount;
+  }
+
+  bool get hasIncompleteHistoricalCosts {
+    return salesWithoutHistoricalCost > 0;
+  }
+}
+
+class ProductSalesReport {
+  final int productId;
+  final String productName;
+  final String? sku;
+  final int quantitySold;
+  final int salesSubtotalCents;
+  final int knownCostCents;
+  final bool hasMissingHistoricalCost;
+
+  const ProductSalesReport({
+    required this.productId,
+    required this.productName,
+    required this.sku,
+    required this.quantitySold,
+    required this.salesSubtotalCents,
+    required this.knownCostCents,
+    required this.hasMissingHistoricalCost,
+  });
+
+  int get knownGrossProfitCents {
+    return salesSubtotalCents - knownCostCents;
+  }
 }
 
 @DriftDatabase(
@@ -1321,5 +1384,257 @@ class AppDatabase extends _$AppDatabase {
         note: Value(cleanNote),
       ),
     );
+  }
+
+  // -------------------------
+  // Reportes
+  // -------------------------
+
+  Stream<BusinessReportSummary> watchBusinessReportSummary({
+    required DateTime start,
+    required DateTime end,
+  }) {
+    if (!end.isAfter(start)) {
+      throw ArgumentError(
+        'La fecha final debe ser posterior a la fecha inicial.',
+      );
+    }
+
+    final query = customSelect(
+      '''
+      WITH period AS (
+        SELECT
+          ? AS start_at,
+          ? AS end_at
+      ),
+      sales_totals AS (
+        SELECT
+          COALESCE(
+            SUM(
+              CASE
+                WHEN s.status = 'completed' THEN 1
+                ELSE 0
+              END
+            ),
+            0
+          ) AS completed_sales_count,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN s.status = 'cancelled' THEN 1
+                ELSE 0
+              END
+            ),
+            0
+          ) AS cancelled_sales_count,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN s.status = 'completed'
+                  THEN s.total_cents
+                ELSE 0
+              END
+            ),
+            0
+          ) AS sales_total_cents,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN s.status = 'completed'
+                  THEN s.discount_cents
+                ELSE 0
+              END
+            ),
+            0
+          ) AS discounts_cents
+
+        FROM sales AS s
+        CROSS JOIN period AS p
+
+        WHERE s.created_at >= p.start_at
+          AND s.created_at < p.end_at
+      ),
+      item_totals AS (
+        SELECT
+          COALESCE(
+            SUM(
+              CASE
+                WHEN s.status = 'completed'
+                  THEN si.quantity
+                ELSE 0
+              END
+            ),
+            0
+          ) AS sold_units,
+
+          COALESCE(
+            SUM(
+              CASE
+                WHEN s.status = 'completed'
+                  AND si.unit_cost_cents IS NOT NULL
+                  THEN si.quantity * si.unit_cost_cents
+                ELSE 0
+              END
+            ),
+            0
+          ) AS cost_of_goods_sold_cents,
+
+          COUNT(
+            DISTINCT CASE
+              WHEN s.status = 'completed'
+                AND si.unit_cost_cents IS NULL
+                THEN s.id
+              ELSE NULL
+            END
+          ) AS sales_without_historical_cost
+
+        FROM sale_items AS si
+
+        INNER JOIN sales AS s
+          ON s.id = si.sale_id
+
+        CROSS JOIN period AS p
+
+        WHERE s.created_at >= p.start_at
+          AND s.created_at < p.end_at
+      ),
+      expense_totals AS (
+        SELECT
+          COALESCE(
+            SUM(e.amount_cents),
+            0
+          ) AS expenses_cents
+
+        FROM expenses AS e
+        CROSS JOIN period AS p
+
+        WHERE e.created_at >= p.start_at
+          AND e.created_at < p.end_at
+      )
+
+      SELECT
+        st.completed_sales_count,
+        st.cancelled_sales_count,
+        st.sales_total_cents,
+        st.discounts_cents,
+        it.sold_units,
+        it.cost_of_goods_sold_cents,
+        it.sales_without_historical_cost,
+        et.expenses_cents
+
+      FROM sales_totals AS st
+      CROSS JOIN item_totals AS it
+      CROSS JOIN expense_totals AS et
+      ''',
+      variables: [Variable.withDateTime(start), Variable.withDateTime(end)],
+      readsFrom: {sales, saleItems, expenses},
+    );
+
+    return query.watch().map((rows) {
+      final row = rows.first;
+
+      return BusinessReportSummary(
+        completedSalesCount: row.read<int>('completed_sales_count'),
+        cancelledSalesCount: row.read<int>('cancelled_sales_count'),
+        salesTotalCents: row.read<int>('sales_total_cents'),
+        discountsCents: row.read<int>('discounts_cents'),
+        soldUnits: row.read<int>('sold_units'),
+        costOfGoodsSoldCents: row.read<int>('cost_of_goods_sold_cents'),
+        salesWithoutHistoricalCost: row.read<int>(
+          'sales_without_historical_cost',
+        ),
+        expensesCents: row.read<int>('expenses_cents'),
+      );
+    });
+  }
+
+  Stream<List<ProductSalesReport>> watchProductSalesReport({
+    required DateTime start,
+    required DateTime end,
+  }) {
+    if (!end.isAfter(start)) {
+      throw ArgumentError(
+        'La fecha final debe ser posterior a la fecha inicial.',
+      );
+    }
+
+    final query = customSelect(
+      '''
+      SELECT
+        p.id AS product_id,
+        p.name AS product_name,
+        p.sku AS product_sku,
+
+        COALESCE(
+          SUM(si.quantity),
+          0
+        ) AS quantity_sold,
+
+        COALESCE(
+          SUM(si.subtotal_cents),
+          0
+        ) AS sales_subtotal_cents,
+
+        COALESCE(
+          SUM(
+            CASE
+              WHEN si.unit_cost_cents IS NOT NULL
+                THEN si.quantity * si.unit_cost_cents
+              ELSE 0
+            END
+          ),
+          0
+        ) AS known_cost_cents,
+
+        MAX(
+          CASE
+            WHEN si.unit_cost_cents IS NULL THEN 1
+            ELSE 0
+          END
+        ) AS has_missing_historical_cost
+
+      FROM sale_items AS si
+
+      INNER JOIN sales AS s
+        ON s.id = si.sale_id
+
+      INNER JOIN products AS p
+        ON p.id = si.product_id
+
+      WHERE s.status = 'completed'
+        AND s.created_at >= ?
+        AND s.created_at < ?
+
+      GROUP BY
+        p.id,
+        p.name,
+        p.sku
+
+      ORDER BY
+        quantity_sold DESC,
+        sales_subtotal_cents DESC,
+        p.name ASC
+      ''',
+      variables: [Variable.withDateTime(start), Variable.withDateTime(end)],
+      readsFrom: {sales, saleItems, products},
+    );
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return ProductSalesReport(
+          productId: row.read<int>('product_id'),
+          productName: row.read<String>('product_name'),
+          sku: row.readNullable<String>('product_sku'),
+          quantitySold: row.read<int>('quantity_sold'),
+          salesSubtotalCents: row.read<int>('sales_subtotal_cents'),
+          knownCostCents: row.read<int>('known_cost_cents'),
+          hasMissingHistoricalCost:
+              row.read<int>('has_missing_historical_cost') == 1,
+        );
+      }).toList();
+    });
   }
 }

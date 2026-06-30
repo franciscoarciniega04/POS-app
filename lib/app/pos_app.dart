@@ -8,6 +8,7 @@ import '../features/sales/screens/sales_screen.dart';
 import '../features/inventory/screens/inventory_screen.dart';
 import '../features/expenses/screens/expenses_screen.dart';
 import '../features/cash/screens/cash_screen.dart';
+import '../features/reports/screens/reports_screen.dart';
 
 class PosApp extends StatelessWidget {
   final AppDatabase database;
@@ -156,7 +157,14 @@ class HomeScreen extends StatelessWidget {
         icon: Icons.bar_chart_outlined,
         iconColor: const Color(0xFF7E22CE),
         iconBackgroundColor: const Color(0xFFFAF5FF),
-        onTap: () {},
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ReportsScreen(database: database),
+            ),
+          );
+        },
       ),
     ];
 
