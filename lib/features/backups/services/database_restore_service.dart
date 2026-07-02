@@ -23,16 +23,36 @@ class DatabaseRestartRequiredException implements Exception {
 class DatabaseRestoreService {
   const DatabaseRestoreService._();
 
-  static const _baseRequiredTables = {
-    'products',
-    'inventory_movements',
-    'purchases',
-    'purchase_items',
-    'sales',
-    'sale_items',
-    'expenses',
-    'cash_transactions',
-  };
+  static Set<String> _requiredTablesForVersion(int databaseVersion) {
+    final tables = <String>{
+      'products',
+      'inventory_movements',
+      'purchases',
+      'purchase_items',
+      'sales',
+      'sale_items',
+      'expenses',
+      'cash_transactions',
+    };
+
+    if (databaseVersion >= 2) {
+      tables.add('suppliers');
+    }
+
+    if (databaseVersion >= 4) {
+      tables.add('customers');
+    }
+
+    if (databaseVersion >= 5) {
+      tables.addAll({
+        'customer_orders',
+        'customer_order_items',
+        'order_purchase_allocations',
+      });
+    }
+
+    return tables;
+  }
 
   static Future<File?> selectBackupFile() async {
     final result = await FilePicker.pickFiles(
@@ -213,10 +233,7 @@ class DatabaseRestoreService {
         );
       }
 
-      final requiredTables = {
-        ..._baseRequiredTables,
-        if (databaseVersion >= 2) 'suppliers',
-      };
+      final requiredTables = _requiredTablesForVersion(databaseVersion);
 
       final tableNames = _readTableNames(sqliteDatabase);
 

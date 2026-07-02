@@ -10,6 +10,8 @@ import '../features/expenses/screens/expenses_screen.dart';
 import '../features/cash/screens/cash_screen.dart';
 import '../features/reports/screens/reports_screen.dart';
 import '../features/backups/screens/backup_screen.dart';
+import '../features/customers/screens/customers_screen.dart';
+import '../features/orders/screens/orders_screen.dart';
 
 class PosApp extends StatelessWidget {
   final AppDatabase database;
@@ -177,6 +179,34 @@ class HomeScreen extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => BackupScreen(database: database)),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Clientes',
+        subtitle: 'Catálogo e historial de clientes',
+        icon: Icons.people_outline,
+        iconColor: const Color(0xFF1D4ED8),
+        iconBackgroundColor: const Color(0xFFEFF6FF),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CustomersScreen(database: database),
+            ),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Pedidos',
+        subtitle: 'Solicitudes de productos por cliente',
+        icon: Icons.receipt_long_outlined,
+        iconColor: const Color(0xFF7C3AED),
+        iconBackgroundColor: const Color(0xFFF5F3FF),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => OrdersScreen(database: database)),
           );
         },
       ),

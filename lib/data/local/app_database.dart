@@ -6,6 +6,27 @@ import 'package:path_provider/path_provider.dart';
 
 part 'app_database.g.dart';
 
+class CustomerOrderStatus {
+  const CustomerOrderStatus._();
+
+  static const pending = 'pending';
+  static const partiallyFulfilled = 'partially_fulfilled';
+  static const fulfilled = 'fulfilled';
+  static const cancelled = 'cancelled';
+
+  static const values = {pending, partiallyFulfilled, fulfilled, cancelled};
+
+  static String label(String status) {
+    return switch (status) {
+      pending => 'Pendiente',
+      partiallyFulfilled => 'Parcialmente surtido',
+      fulfilled => 'Surtido',
+      cancelled => 'Cancelado',
+      _ => status,
+    };
+  }
+}
+
 class Products extends Table {
   IntColumn get id => integer().autoIncrement()();
 
@@ -294,6 +315,158 @@ class ProductSalesReport {
   }
 }
 
+class Customers extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  TextColumn get name => text().withLength(min: 1, max: 120)();
+
+  TextColumn get phone => text().withLength(min: 3, max: 30).nullable()();
+
+  TextColumn get email => text().withLength(min: 5, max: 150).nullable()();
+
+  TextColumn get address => text().nullable()();
+
+  TextColumn get notes => text().nullable()();
+
+  BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+class CustomerOrders extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get customerId =>
+      integer().references(Customers, #id, onDelete: KeyAction.restrict)();
+
+  TextColumn get status => text()
+      .withLength(min: 1, max: 30)
+      .withDefault(const Constant(CustomerOrderStatus.pending))();
+
+  TextColumn get notes => text().nullable()();
+
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+class CustomerOrderItems extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get orderId =>
+      integer().references(CustomerOrders, #id, onDelete: KeyAction.cascade)();
+
+  IntColumn get productId =>
+      integer().references(Products, #id, onDelete: KeyAction.restrict)();
+
+  // Conserva el nombre histórico del producto,
+  // aunque después sea renombrado.
+  TextColumn get productName => text().withLength(min: 1, max: 200)();
+
+  IntColumn get quantityRequested => integer()();
+
+  IntColumn get quantityFulfilled => integer().withDefault(const Constant(0))();
+
+  TextColumn get notes => text().nullable()();
+
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+class OrderPurchaseAllocations extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get orderItemId => integer().references(
+    CustomerOrderItems,
+    #id,
+    onDelete: KeyAction.cascade,
+  )();
+
+  IntColumn get purchaseItemId =>
+      integer().references(PurchaseItems, #id, onDelete: KeyAction.cascade)();
+
+  IntColumn get quantity => integer()();
+
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+class CustomerOrderLineInput {
+  final int productId;
+  final int quantity;
+  final String? notes;
+
+  const CustomerOrderLineInput({
+    required this.productId,
+    required this.quantity,
+    this.notes,
+  });
+}
+
+class CustomerOrderWithCustomer {
+  final CustomerOrder order;
+  final Customer customer;
+
+  const CustomerOrderWithCustomer({
+    required this.order,
+    required this.customer,
+  });
+}
+
+class CustomerOrderItemDetail {
+  final CustomerOrderItem orderItem;
+  final Product product;
+
+  const CustomerOrderItemDetail({
+    required this.orderItem,
+    required this.product,
+  });
+
+  int get pendingQuantity {
+    final pending = orderItem.quantityRequested - orderItem.quantityFulfilled;
+
+    return pending < 0 ? 0 : pending;
+  }
+
+  bool get isFullyFulfilled {
+    return pendingQuantity == 0;
+  }
+}
+
+class PendingCustomerOrderItemDetail {
+  final CustomerOrder order;
+  final Customer customer;
+  final CustomerOrderItem orderItem;
+  final Product product;
+
+  const PendingCustomerOrderItemDetail({
+    required this.order,
+    required this.customer,
+    required this.orderItem,
+    required this.product,
+  });
+
+  int get pendingQuantity {
+    final value = orderItem.quantityRequested - orderItem.quantityFulfilled;
+
+    return value < 0 ? 0 : value;
+  }
+}
+
+class OrderFulfillmentLineInput {
+  final int orderItemId;
+  final int quantity;
+  final int unitCostCents;
+
+  const OrderFulfillmentLineInput({
+    required this.orderItemId,
+    required this.quantity,
+    required this.unitCostCents,
+  });
+
+  int get subtotalCents => quantity * unitCostCents;
+}
+
 @DriftDatabase(
   tables: [
     Products,
@@ -305,13 +478,17 @@ class ProductSalesReport {
     SaleItems,
     Expenses,
     CashTransactions,
+    Customers,
+    CustomerOrders,
+    CustomerOrderItems,
+    OrderPurchaseAllocations,
   ],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   static const databaseName = 'pos_offline';
-  static const currentSchemaVersion = 3;
+  static const currentSchemaVersion = 5;
 
   static Future<Directory> getDatabaseDirectory() {
     return getApplicationSupportDirectory();
@@ -345,6 +522,18 @@ class AppDatabase extends _$AppDatabase {
 
         if (from < 3) {
           await migrator.addColumn(saleItems, saleItems.unitCostCents);
+        }
+
+        if (from < 4) {
+          await migrator.createTable(customers);
+        }
+
+        if (from < 5) {
+          await migrator.createTable(customerOrders);
+
+          await migrator.createTable(customerOrderItems);
+
+          await migrator.createTable(orderPurchaseAllocations);
         }
       },
       beforeOpen: (details) async {
@@ -947,6 +1136,8 @@ class AppDatabase extends _$AppDatabase {
           ),
         );
       }
+
+      await _reverseOrderAllocationsForPurchase(itemRows);
 
       await (update(purchases)..where((tbl) => tbl.id.equals(purchaseId)))
           .write(PurchasesCompanion(status: const Value('cancelled')));
@@ -1671,5 +1862,710 @@ class AppDatabase extends _$AppDatabase {
     final escapedFilePath = cleanFilePath.replaceAll("'", "''");
 
     await customStatement("VACUUM INTO '$escapedFilePath'");
+  }
+
+  // -------------------------
+  // Clientes
+  // -------------------------
+
+  Stream<List<Customer>> watchAllCustomers({bool includeInactive = false}) {
+    final query = select(customers);
+
+    if (!includeInactive) {
+      query.where((tbl) => tbl.isActive.equals(true));
+    }
+
+    query.orderBy([(tbl) => OrderingTerm.asc(tbl.name)]);
+
+    return query.watch();
+  }
+
+  Stream<Customer?> watchCustomerById(int customerId) {
+    return (select(
+      customers,
+    )..where((tbl) => tbl.id.equals(customerId))).watchSingleOrNull();
+  }
+
+  Future<int> createCustomer({
+    required String name,
+    String? phone,
+    String? email,
+    String? address,
+    String? notes,
+  }) async {
+    final cleanName = name.trim();
+    final cleanPhone = _cleanOptionalText(phone);
+    final cleanEmail = _cleanOptionalText(email);
+    final cleanAddress = _cleanOptionalText(address);
+    final cleanNotes = _cleanOptionalText(notes);
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('El nombre del cliente es obligatorio.');
+    }
+
+    if (cleanName.length > 120) {
+      throw ArgumentError(
+        'El nombre del cliente no puede exceder 120 caracteres.',
+      );
+    }
+
+    if (cleanPhone != null && cleanPhone.length > 30) {
+      throw ArgumentError('El teléfono no puede exceder 30 caracteres.');
+    }
+
+    if (cleanEmail != null && cleanEmail.length > 150) {
+      throw ArgumentError('El correo no puede exceder 150 caracteres.');
+    }
+
+    return into(customers).insert(
+      CustomersCompanion(
+        name: Value(cleanName),
+        phone: Value(cleanPhone),
+        email: Value(cleanEmail),
+        address: Value(cleanAddress),
+        notes: Value(cleanNotes),
+      ),
+    );
+  }
+
+  Future<void> updateCustomer({
+    required int customerId,
+    required String name,
+    String? phone,
+    String? email,
+    String? address,
+    String? notes,
+  }) async {
+    final cleanName = name.trim();
+    final cleanPhone = _cleanOptionalText(phone);
+    final cleanEmail = _cleanOptionalText(email);
+    final cleanAddress = _cleanOptionalText(address);
+    final cleanNotes = _cleanOptionalText(notes);
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('El nombre del cliente es obligatorio.');
+    }
+
+    if (cleanName.length > 120) {
+      throw ArgumentError(
+        'El nombre del cliente no puede exceder 120 caracteres.',
+      );
+    }
+
+    if (cleanPhone != null && cleanPhone.length > 30) {
+      throw ArgumentError('El teléfono no puede exceder 30 caracteres.');
+    }
+
+    if (cleanEmail != null && cleanEmail.length > 150) {
+      throw ArgumentError('El correo no puede exceder 150 caracteres.');
+    }
+
+    final affectedRows =
+        await (update(
+          customers,
+        )..where((tbl) => tbl.id.equals(customerId))).write(
+          CustomersCompanion(
+            name: Value(cleanName),
+            phone: Value(cleanPhone),
+            email: Value(cleanEmail),
+            address: Value(cleanAddress),
+            notes: Value(cleanNotes),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+    if (affectedRows == 0) {
+      throw StateError('No se encontró el cliente.');
+    }
+  }
+
+  Future<void> setCustomerActive({
+    required int customerId,
+    required bool isActive,
+  }) async {
+    final affectedRows =
+        await (update(
+          customers,
+        )..where((tbl) => tbl.id.equals(customerId))).write(
+          CustomersCompanion(
+            isActive: Value(isActive),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+    if (affectedRows == 0) {
+      throw StateError('No se encontró el cliente.');
+    }
+  }
+
+  // -------------------------
+  // Pedidos de clientes
+  // -------------------------
+
+  Stream<List<CustomerOrderWithCustomer>> watchAllCustomerOrders() {
+    final query = select(customerOrders).join([
+      innerJoin(customers, customers.id.equalsExp(customerOrders.customerId)),
+    ]);
+
+    query.orderBy([
+      OrderingTerm(
+        expression: customerOrders.createdAt,
+        mode: OrderingMode.desc,
+      ),
+    ]);
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return CustomerOrderWithCustomer(
+          order: row.readTable(customerOrders),
+          customer: row.readTable(customers),
+        );
+      }).toList();
+    });
+  }
+
+  Stream<List<CustomerOrderWithCustomer>> watchCustomerOrdersByCustomer(
+    int customerId,
+  ) {
+    final query = select(customerOrders).join([
+      innerJoin(customers, customers.id.equalsExp(customerOrders.customerId)),
+    ]);
+
+    query.where(customerOrders.customerId.equals(customerId));
+
+    query.orderBy([
+      OrderingTerm(
+        expression: customerOrders.createdAt,
+        mode: OrderingMode.desc,
+      ),
+    ]);
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return CustomerOrderWithCustomer(
+          order: row.readTable(customerOrders),
+          customer: row.readTable(customers),
+        );
+      }).toList();
+    });
+  }
+
+  Stream<CustomerOrderWithCustomer?> watchCustomerOrderById(int orderId) {
+    final query = select(customerOrders).join([
+      innerJoin(customers, customers.id.equalsExp(customerOrders.customerId)),
+    ]);
+
+    query.where(customerOrders.id.equals(orderId));
+
+    return query.watchSingleOrNull().map((row) {
+      if (row == null) {
+        return null;
+      }
+
+      return CustomerOrderWithCustomer(
+        order: row.readTable(customerOrders),
+        customer: row.readTable(customers),
+      );
+    });
+  }
+
+  Stream<List<CustomerOrderItemDetail>> watchCustomerOrderItems(int orderId) {
+    final query = select(customerOrderItems).join([
+      innerJoin(products, products.id.equalsExp(customerOrderItems.productId)),
+    ]);
+
+    query.where(customerOrderItems.orderId.equals(orderId));
+
+    query.orderBy([
+      OrderingTerm(expression: customerOrderItems.id, mode: OrderingMode.asc),
+    ]);
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return CustomerOrderItemDetail(
+          orderItem: row.readTable(customerOrderItems),
+          product: row.readTable(products),
+        );
+      }).toList();
+    });
+  }
+
+  Future<int> createCustomerOrder({
+    required int customerId,
+    required List<CustomerOrderLineInput> items,
+    String? notes,
+  }) async {
+    final cleanNotes = _cleanOptionalText(notes);
+
+    if (items.isEmpty) {
+      throw ArgumentError('El pedido debe incluir al menos un producto.');
+    }
+
+    final customerRows = await (select(
+      customers,
+    )..where((tbl) => tbl.id.equals(customerId))).get();
+
+    if (customerRows.isEmpty) {
+      throw StateError('No se encontró el cliente.');
+    }
+
+    final customer = customerRows.first;
+
+    if (!customer.isActive) {
+      throw StateError(
+        'No se pueden registrar pedidos '
+        'para un cliente inactivo.',
+      );
+    }
+
+    final productIds = items.map((item) => item.productId).toSet();
+
+    if (productIds.length != items.length) {
+      throw ArgumentError(
+        'El mismo producto aparece más de una vez '
+        'en el pedido.',
+      );
+    }
+
+    for (final item in items) {
+      if (item.quantity <= 0) {
+        throw ArgumentError('Todas las cantidades deben ser mayores a cero.');
+      }
+    }
+
+    final productRows = await (select(
+      products,
+    )..where((tbl) => tbl.id.isIn(productIds))).get();
+
+    if (productRows.length != productIds.length) {
+      throw StateError('Uno o más productos ya no existen.');
+    }
+
+    final productsById = {
+      for (final product in productRows) product.id: product,
+    };
+
+    for (final item in items) {
+      final product = productsById[item.productId]!;
+
+      if (!product.isActive) {
+        throw StateError(
+          'El producto "${product.name}" '
+          'está inactivo.',
+        );
+      }
+    }
+
+    return transaction(() async {
+      final orderId = await into(customerOrders).insert(
+        CustomerOrdersCompanion(
+          customerId: Value(customerId),
+          status: const Value(CustomerOrderStatus.pending),
+          notes: Value(cleanNotes),
+        ),
+      );
+
+      for (final item in items) {
+        final product = productsById[item.productId]!;
+
+        await into(customerOrderItems).insert(
+          CustomerOrderItemsCompanion(
+            orderId: Value(orderId),
+            productId: Value(product.id),
+            productName: Value(product.name),
+            quantityRequested: Value(item.quantity),
+            quantityFulfilled: const Value(0),
+            notes: Value(_cleanOptionalText(item.notes)),
+          ),
+        );
+      }
+
+      return orderId;
+    });
+  }
+
+  Future<void> cancelCustomerOrder(int orderId) async {
+    final orderRows = await (select(
+      customerOrders,
+    )..where((tbl) => tbl.id.equals(orderId))).get();
+
+    if (orderRows.isEmpty) {
+      throw StateError('No se encontró el pedido.');
+    }
+
+    final order = orderRows.first;
+
+    if (order.status == CustomerOrderStatus.cancelled) {
+      return;
+    }
+
+    if (order.status == CustomerOrderStatus.fulfilled) {
+      throw StateError(
+        'Un pedido completamente surtido '
+        'no puede cancelarse desde este módulo.',
+      );
+    }
+
+    await (update(
+      customerOrders,
+    )..where((tbl) => tbl.id.equals(orderId))).write(
+      CustomerOrdersCompanion(
+        status: const Value(CustomerOrderStatus.cancelled),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<List<PendingCustomerOrderItemDetail>>
+  getPendingCustomerOrderItems() async {
+    final query = select(customerOrderItems).join([
+      innerJoin(
+        customerOrders,
+        customerOrders.id.equalsExp(customerOrderItems.orderId),
+      ),
+      innerJoin(customers, customers.id.equalsExp(customerOrders.customerId)),
+      innerJoin(products, products.id.equalsExp(customerOrderItems.productId)),
+    ]);
+
+    query.where(
+      customerOrders.status.isIn([
+            CustomerOrderStatus.pending,
+            CustomerOrderStatus.partiallyFulfilled,
+          ]) &
+          customerOrderItems.quantityFulfilled.isSmallerThan(
+            customerOrderItems.quantityRequested,
+          ),
+    );
+
+    query.orderBy([
+      OrderingTerm.asc(products.name),
+      OrderingTerm.asc(customers.name),
+      OrderingTerm.asc(customerOrders.id),
+    ]);
+
+    final rows = await query.get();
+
+    return rows.map((row) {
+      return PendingCustomerOrderItemDetail(
+        order: row.readTable(customerOrders),
+        customer: row.readTable(customers),
+        orderItem: row.readTable(customerOrderItems),
+        product: row.readTable(products),
+      );
+    }).toList();
+  }
+
+  Future<int> createPurchaseFromOrderFulfillment({
+    required int supplierId,
+    String? note,
+    required List<OrderFulfillmentLineInput> items,
+  }) async {
+    if (items.isEmpty) {
+      throw ArgumentError('Selecciona al menos un producto pendiente.');
+    }
+
+    final orderItemIds = <int>{};
+
+    for (final item in items) {
+      if (item.quantity <= 0) {
+        throw ArgumentError('Todas las cantidades deben ser mayores que cero.');
+      }
+
+      if (item.unitCostCents < 0) {
+        throw ArgumentError('El costo de compra no puede ser negativo.');
+      }
+
+      if (!orderItemIds.add(item.orderItemId)) {
+        throw ArgumentError(
+          'El mismo producto pendiente fue seleccionado más de una vez.',
+        );
+      }
+    }
+
+    final cleanNote = _cleanOptionalText(note);
+
+    final totalCents = items.fold<int>(
+      0,
+      (total, item) => total + item.subtotalCents,
+    );
+
+    return transaction(() async {
+      final supplierRows =
+          await (select(suppliers)..where(
+                (tbl) => tbl.id.equals(supplierId) & tbl.isActive.equals(true),
+              ))
+              .get();
+
+      if (supplierRows.isEmpty) {
+        throw StateError(
+          'El proveedor seleccionado no existe o está inactivo.',
+        );
+      }
+
+      final supplier = supplierRows.first;
+
+      final orderItemRows = await (select(
+        customerOrderItems,
+      )..where((tbl) => tbl.id.isIn(orderItemIds))).get();
+
+      if (orderItemRows.length != orderItemIds.length) {
+        throw StateError('Uno o más productos del pedido ya no existen.');
+      }
+
+      final orderItemsById = {
+        for (final orderItem in orderItemRows) orderItem.id: orderItem,
+      };
+
+      final orderIds = orderItemRows.map((item) => item.orderId).toSet();
+
+      final orderRows = await (select(
+        customerOrders,
+      )..where((tbl) => tbl.id.isIn(orderIds))).get();
+
+      if (orderRows.length != orderIds.length) {
+        throw StateError('Uno o más pedidos ya no existen.');
+      }
+
+      final ordersById = {for (final order in orderRows) order.id: order};
+
+      final productIds = orderItemRows.map((item) => item.productId).toSet();
+
+      final productRows = await (select(
+        products,
+      )..where((tbl) => tbl.id.isIn(productIds))).get();
+
+      if (productRows.length != productIds.length) {
+        throw StateError('Uno o más productos ya no existen.');
+      }
+
+      final productsById = {
+        for (final product in productRows) product.id: product,
+      };
+
+      for (final input in items) {
+        final orderItem = orderItemsById[input.orderItemId]!;
+        final order = ordersById[orderItem.orderId]!;
+        final product = productsById[orderItem.productId]!;
+
+        if (order.status == CustomerOrderStatus.cancelled) {
+          throw StateError('El pedido #${order.id} está cancelado.');
+        }
+
+        if (order.status == CustomerOrderStatus.fulfilled) {
+          throw StateError(
+            'El pedido #${order.id} ya está completamente surtido.',
+          );
+        }
+
+        final pendingQuantity =
+            orderItem.quantityRequested - orderItem.quantityFulfilled;
+
+        if (pendingQuantity <= 0) {
+          throw StateError(
+            'El producto "${orderItem.productName}" ya fue surtido.',
+          );
+        }
+
+        if (input.quantity > pendingQuantity) {
+          throw StateError(
+            'Solo quedan $pendingQuantity unidades pendientes de '
+            '"${orderItem.productName}".',
+          );
+        }
+
+        if (!product.isActive) {
+          throw StateError('El producto "${product.name}" está inactivo.');
+        }
+      }
+
+      final purchaseId = await into(purchases).insert(
+        PurchasesCompanion(
+          supplierId: Value(supplier.id),
+          supplierName: Value(supplier.name),
+          note: Value(cleanNote),
+          totalCents: Value(totalCents),
+          status: const Value('completed'),
+        ),
+      );
+
+      final stockByProductId = {
+        for (final product in productRows) product.id: product.currentStock,
+      };
+
+      final affectedOrderIds = <int>{};
+
+      for (final input in items) {
+        final orderItem = orderItemsById[input.orderItemId]!;
+        final product = productsById[orderItem.productId]!;
+        final newStock = stockByProductId[product.id]! + input.quantity;
+
+        stockByProductId[product.id] = newStock;
+
+        final purchaseItemId = await into(purchaseItems).insert(
+          PurchaseItemsCompanion(
+            purchaseId: Value(purchaseId),
+            productId: Value(product.id),
+            quantity: Value(input.quantity),
+            unitCostCents: Value(input.unitCostCents),
+            subtotalCents: Value(input.subtotalCents),
+          ),
+        );
+
+        await (update(
+          products,
+        )..where((tbl) => tbl.id.equals(product.id))).write(
+          ProductsCompanion(
+            currentStock: Value(newStock),
+            purchasePriceCents: Value(input.unitCostCents),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+        await into(inventoryMovements).insert(
+          InventoryMovementsCompanion(
+            productId: Value(product.id),
+            type: const Value('purchase_entry'),
+            quantity: Value(input.quantity),
+            stockAfterMovement: Value(newStock),
+            note: Value('Compra #$purchaseId · Pedido #${orderItem.orderId}'),
+          ),
+        );
+
+        await into(orderPurchaseAllocations).insert(
+          OrderPurchaseAllocationsCompanion(
+            orderItemId: Value(orderItem.id),
+            purchaseItemId: Value(purchaseItemId),
+            quantity: Value(input.quantity),
+          ),
+        );
+
+        await (update(
+          customerOrderItems,
+        )..where((tbl) => tbl.id.equals(orderItem.id))).write(
+          CustomerOrderItemsCompanion(
+            quantityFulfilled: Value(
+              orderItem.quantityFulfilled + input.quantity,
+            ),
+          ),
+        );
+
+        affectedOrderIds.add(orderItem.orderId);
+      }
+
+      for (final orderId in affectedOrderIds) {
+        await _recalculateCustomerOrderStatus(orderId);
+      }
+
+      await into(cashTransactions).insert(
+        CashTransactionsCompanion(
+          type: const Value('expense'),
+          concept: Value('Compra #$purchaseId · Pedidos'),
+          amountCents: Value(totalCents),
+          note: Value(
+            cleanNote == null
+                ? 'Proveedor: ${supplier.name}'
+                : 'Proveedor: ${supplier.name} · $cleanNote',
+          ),
+        ),
+      );
+
+      return purchaseId;
+    });
+  }
+
+  Future<void> _recalculateCustomerOrderStatus(int orderId) async {
+    final orderRows = await (select(
+      customerOrders,
+    )..where((tbl) => tbl.id.equals(orderId))).get();
+
+    if (orderRows.isEmpty) {
+      return;
+    }
+
+    final order = orderRows.first;
+
+    if (order.status == CustomerOrderStatus.cancelled) {
+      return;
+    }
+
+    final itemRows = await (select(
+      customerOrderItems,
+    )..where((tbl) => tbl.orderId.equals(orderId))).get();
+
+    if (itemRows.isEmpty) {
+      return;
+    }
+
+    final allFulfilled = itemRows.every(
+      (item) => item.quantityFulfilled >= item.quantityRequested,
+    );
+
+    final anyFulfilled = itemRows.any((item) => item.quantityFulfilled > 0);
+
+    final newStatus = allFulfilled
+        ? CustomerOrderStatus.fulfilled
+        : anyFulfilled
+        ? CustomerOrderStatus.partiallyFulfilled
+        : CustomerOrderStatus.pending;
+
+    await (update(
+      customerOrders,
+    )..where((tbl) => tbl.id.equals(orderId))).write(
+      CustomerOrdersCompanion(
+        status: Value(newStatus),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> _reverseOrderAllocationsForPurchase(
+    List<PurchaseItem> purchaseItemRows,
+  ) async {
+    if (purchaseItemRows.isEmpty) {
+      return;
+    }
+
+    final purchaseItemIds = purchaseItemRows.map((item) => item.id).toSet();
+
+    final allocationRows = await (select(
+      orderPurchaseAllocations,
+    )..where((tbl) => tbl.purchaseItemId.isIn(purchaseItemIds))).get();
+
+    if (allocationRows.isEmpty) {
+      return;
+    }
+
+    final affectedOrderIds = <int>{};
+
+    for (final allocation in allocationRows) {
+      final orderItemRows = await (select(
+        customerOrderItems,
+      )..where((tbl) => tbl.id.equals(allocation.orderItemId))).get();
+
+      if (orderItemRows.isEmpty) {
+        continue;
+      }
+
+      final orderItem = orderItemRows.first;
+      final newFulfilled = orderItem.quantityFulfilled - allocation.quantity;
+
+      await (update(
+        customerOrderItems,
+      )..where((tbl) => tbl.id.equals(orderItem.id))).write(
+        CustomerOrderItemsCompanion(
+          quantityFulfilled: Value(newFulfilled < 0 ? 0 : newFulfilled),
+        ),
+      );
+
+      affectedOrderIds.add(orderItem.orderId);
+    }
+
+    await (delete(
+      orderPurchaseAllocations,
+    )..where((tbl) => tbl.purchaseItemId.isIn(purchaseItemIds))).go();
+
+    for (final orderId in affectedOrderIds) {
+      await _recalculateCustomerOrderStatus(orderId);
+    }
   }
 }
