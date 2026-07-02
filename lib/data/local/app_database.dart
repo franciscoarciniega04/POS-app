@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:path_provider/path_provider.dart';
@@ -308,8 +310,25 @@ class ProductSalesReport {
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
+  static const databaseName = 'pos_offline';
+  static const currentSchemaVersion = 3;
+
+  static Future<Directory> getDatabaseDirectory() {
+    return getApplicationSupportDirectory();
+  }
+
+  static Future<File> getDatabaseFile() async {
+    final directory = await getDatabaseDirectory();
+
+    return File(
+      '${directory.path}'
+      '${Platform.pathSeparator}'
+      '$databaseName.sqlite',
+    );
+  }
+
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => currentSchemaVersion;
 
   @override
   MigrationStrategy get migration {
@@ -336,10 +355,8 @@ class AppDatabase extends _$AppDatabase {
 
   static QueryExecutor _openConnection() {
     return driftDatabase(
-      name: 'pos_offline',
-      native: const DriftNativeOptions(
-        databaseDirectory: getApplicationSupportDirectory,
-      ),
+      name: databaseName,
+      native: DriftNativeOptions(databaseDirectory: getDatabaseDirectory),
     );
   }
 
@@ -1636,5 +1653,23 @@ class AppDatabase extends _$AppDatabase {
         );
       }).toList();
     });
+  }
+
+  // -------------------------
+  // Respaldos
+  // -------------------------
+
+  Future<void> createBackupAt(String filePath) async {
+    final cleanFilePath = filePath.trim();
+
+    if (cleanFilePath.isEmpty) {
+      throw ArgumentError('La ruta del respaldo es obligatoria.');
+    }
+
+    // En los textos SQL, una comilla simple se escapa
+    // duplicándola.
+    final escapedFilePath = cleanFilePath.replaceAll("'", "''");
+
+    await customStatement("VACUUM INTO '$escapedFilePath'");
   }
 }

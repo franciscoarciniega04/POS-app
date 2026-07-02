@@ -9,6 +9,7 @@ import '../features/inventory/screens/inventory_screen.dart';
 import '../features/expenses/screens/expenses_screen.dart';
 import '../features/cash/screens/cash_screen.dart';
 import '../features/reports/screens/reports_screen.dart';
+import '../features/backups/screens/backup_screen.dart';
 
 class PosApp extends StatelessWidget {
   final AppDatabase database;
@@ -163,6 +164,19 @@ class HomeScreen extends StatelessWidget {
             MaterialPageRoute(
               builder: (_) => ReportsScreen(database: database),
             ),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Respaldos',
+        subtitle: 'Proteger la base de datos',
+        icon: Icons.backup_outlined,
+        iconColor: const Color(0xFF1D4ED8),
+        iconBackgroundColor: const Color(0xFFEFF6FF),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => BackupScreen(database: database)),
           );
         },
       ),
