@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../../data/local/app_database.dart';
 import '../../customers/screens/customer_detail_screen.dart';
+import 'order_form_screen.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   final AppDatabase database;
@@ -116,6 +117,10 @@ class _OrderDetailContent extends StatelessWidget {
         order.status == CustomerOrderStatus.pending ||
         order.status == CustomerOrderStatus.partiallyFulfilled;
 
+    final canEdit =
+        order.status == CustomerOrderStatus.pending ||
+        order.status == CustomerOrderStatus.partiallyFulfilled;
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 980),
@@ -168,21 +173,53 @@ class _OrderDetailContent extends StatelessWidget {
                         ),
                       ],
                     ),
-                    if (canCancel) ...[
+                    if (canEdit || canCancel) ...[
                       const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            _cancelOrder(context, order);
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFBE123C),
-                            side: const BorderSide(color: Color(0xFFBE123C)),
-                          ),
-                          icon: const Icon(Icons.cancel_outlined),
-                          label: const Text('Cancelar pedido'),
-                        ),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final editButton = FilledButton.icon(
+                            onPressed: canEdit
+                                ? () {
+                                    _editOrder(context);
+                                  }
+                                : null,
+                            icon: const Icon(Icons.edit_outlined),
+                            label: const Text('Editar pedido'),
+                          );
+
+                          final cancelButton = OutlinedButton.icon(
+                            onPressed: canCancel
+                                ? () {
+                                    _cancelOrder(context, order);
+                                  }
+                                : null,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFBE123C),
+                              side: const BorderSide(color: Color(0xFFBE123C)),
+                            ),
+                            icon: const Icon(Icons.cancel_outlined),
+                            label: const Text('Cancelar pedido'),
+                          );
+
+                          if (constraints.maxWidth >= 560) {
+                            return Row(
+                              children: [
+                                Expanded(child: editButton),
+                                const SizedBox(width: 12),
+                                Expanded(child: cancelButton),
+                              ],
+                            );
+                          }
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              editButton,
+                              const SizedBox(height: 10),
+                              cancelButton,
+                            ],
+                          );
+                        },
                       ),
                     ],
                   ],
@@ -340,6 +377,19 @@ class _OrderDetailContent extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editOrder(BuildContext context) async {
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OrderFormScreen(
+          database: database,
+          orderToEdit: orderData,
+          initialItems: items,
         ),
       ),
     );

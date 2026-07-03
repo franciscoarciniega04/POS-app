@@ -2184,6 +2184,185 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  Future<void> updateCustomerOrder({
+    required int orderId,
+    required int customerId,
+    required List<CustomerOrderLineInput> items,
+    String? notes,
+  }) async {
+    final cleanNotes = _cleanOptionalText(notes);
+
+    if (items.isEmpty) {
+      throw ArgumentError('El pedido debe incluir al menos un producto.');
+    }
+
+    final productIds = items.map((item) => item.productId).toSet();
+
+    if (productIds.length != items.length) {
+      throw ArgumentError(
+        'El mismo producto aparece más de una vez en el pedido.',
+      );
+    }
+
+    for (final item in items) {
+      if (item.quantity <= 0) {
+        throw ArgumentError('Todas las cantidades deben ser mayores a cero.');
+      }
+    }
+
+    await transaction(() async {
+      final orderRows = await (select(
+        customerOrders,
+      )..where((tbl) => tbl.id.equals(orderId))).get();
+
+      if (orderRows.isEmpty) {
+        throw StateError('No se encontró el pedido.');
+      }
+
+      final order = orderRows.first;
+
+      if (order.status == CustomerOrderStatus.cancelled) {
+        throw StateError('Un pedido cancelado no puede editarse.');
+      }
+
+      if (order.status == CustomerOrderStatus.fulfilled) {
+        throw StateError('Un pedido completamente surtido no puede editarse.');
+      }
+
+      final existingItems = await (select(
+        customerOrderItems,
+      )..where((tbl) => tbl.orderId.equals(orderId))).get();
+
+      final hasFulfilledItems = existingItems.any(
+        (item) => item.quantityFulfilled > 0,
+      );
+
+      if (hasFulfilledItems && customerId != order.customerId) {
+        throw StateError(
+          'No puedes cambiar el cliente porque el pedido '
+          'ya tiene productos surtidos.',
+        );
+      }
+
+      final customerRows = await (select(
+        customers,
+      )..where((tbl) => tbl.id.equals(customerId))).get();
+
+      if (customerRows.isEmpty) {
+        throw StateError('No se encontró el cliente.');
+      }
+
+      final customer = customerRows.first;
+
+      if (!customer.isActive) {
+        throw StateError('El cliente seleccionado está inactivo.');
+      }
+
+      final productRows = await (select(
+        products,
+      )..where((tbl) => tbl.id.isIn(productIds))).get();
+
+      if (productRows.length != productIds.length) {
+        throw StateError('Uno o más productos ya no existen.');
+      }
+
+      final productsById = {
+        for (final product in productRows) product.id: product,
+      };
+
+      final existingItemsByProductId = {
+        for (final item in existingItems) item.productId: item,
+      };
+
+      for (final input in items) {
+        final product = productsById[input.productId]!;
+
+        final existingItem = existingItemsByProductId[input.productId];
+
+        if (!product.isActive && existingItem == null) {
+          throw StateError('El producto "${product.name}" está inactivo.');
+        }
+
+        if (existingItem != null &&
+            input.quantity < existingItem.quantityFulfilled) {
+          throw StateError(
+            'La cantidad solicitada de '
+            '"${existingItem.productName}" no puede ser menor '
+            'que las ${existingItem.quantityFulfilled} unidades '
+            'que ya fueron surtidas.',
+          );
+        }
+      }
+
+      final requestedProductIds = items.map((item) => item.productId).toSet();
+
+      final itemsToDelete = existingItems.where(
+        (item) => !requestedProductIds.contains(item.productId),
+      );
+
+      for (final existingItem in itemsToDelete) {
+        if (existingItem.quantityFulfilled > 0) {
+          throw StateError(
+            'No puedes eliminar '
+            '"${existingItem.productName}" porque ya tiene '
+            '${existingItem.quantityFulfilled} unidades surtidas.',
+          );
+        }
+      }
+
+      await (update(
+        customerOrders,
+      )..where((tbl) => tbl.id.equals(orderId))).write(
+        CustomerOrdersCompanion(
+          customerId: Value(customerId),
+          notes: Value(cleanNotes),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+
+      final itemIdsToDelete = itemsToDelete.map((item) => item.id).toList();
+
+      if (itemIdsToDelete.isNotEmpty) {
+        await (delete(
+          customerOrderItems,
+        )..where((tbl) => tbl.id.isIn(itemIdsToDelete))).go();
+      }
+
+      for (final input in items) {
+        final product = productsById[input.productId]!;
+
+        final existingItem = existingItemsByProductId[input.productId];
+
+        final cleanItemNotes = _cleanOptionalText(input.notes);
+
+        if (existingItem == null) {
+          await into(customerOrderItems).insert(
+            CustomerOrderItemsCompanion(
+              orderId: Value(orderId),
+              productId: Value(product.id),
+              productName: Value(product.name),
+              quantityRequested: Value(input.quantity),
+              quantityFulfilled: const Value(0),
+              notes: Value(cleanItemNotes),
+            ),
+          );
+        } else {
+          await (update(
+            customerOrderItems,
+          )..where((tbl) => tbl.id.equals(existingItem.id))).write(
+            CustomerOrderItemsCompanion(
+              productName: Value(product.name),
+              quantityRequested: Value(input.quantity),
+              notes: Value(cleanItemNotes),
+            ),
+          );
+        }
+      }
+
+      await _recalculateCustomerOrderStatus(orderId);
+    });
+  }
+
   Future<void> cancelCustomerOrder(int orderId) async {
     final orderRows = await (select(
       customerOrders,

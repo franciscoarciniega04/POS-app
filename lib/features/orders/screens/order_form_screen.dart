@@ -8,11 +8,24 @@ class OrderFormScreen extends StatefulWidget {
   final AppDatabase database;
   final int? initialCustomerId;
 
+  final CustomerOrderWithCustomer? orderToEdit;
+  final List<CustomerOrderItemDetail> initialItems;
+
   const OrderFormScreen({
     super.key,
     required this.database,
     this.initialCustomerId,
+    this.orderToEdit,
+    this.initialItems = const <CustomerOrderItemDetail>[],
   });
+
+  bool get isEditing {
+    return orderToEdit != null;
+  }
+
+  bool get hasFulfilledItems {
+    return initialItems.any((item) => item.orderItem.quantityFulfilled > 0);
+  }
 
   @override
   State<OrderFormScreen> createState() => _OrderFormScreenState();
@@ -34,11 +47,29 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   void initState() {
     super.initState();
 
-    _selectedCustomerId = widget.initialCustomerId;
-    _customersStream = widget.database.watchAllCustomers();
-    _productsStream = widget.database.watchInventoryProducts(
-      includeInactive: false,
+    _selectedCustomerId =
+        widget.orderToEdit?.order.customerId ?? widget.initialCustomerId;
+
+    _notesController.text = widget.orderToEdit?.order.notes ?? '';
+
+    _customersStream = widget.database.watchAllCustomers(
+      includeInactive: widget.isEditing,
     );
+
+    _productsStream = widget.database.watchInventoryProducts(
+      includeInactive: widget.isEditing,
+    );
+
+    for (final detail in widget.initialItems) {
+      _lines.add(
+        _OrderLineDraft(
+          product: detail.product,
+          quantity: detail.orderItem.quantityRequested,
+          notes: detail.orderItem.notes,
+          fulfilledQuantity: detail.orderItem.quantityFulfilled,
+        ),
+      );
+    }
   }
 
   @override
@@ -57,7 +88,11 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: AppBar(
-        title: const Text('Nuevo pedido'),
+        title: Text(
+          widget.isEditing
+              ? 'Editar pedido #${widget.orderToEdit!.order.id}'
+              : 'Nuevo pedido',
+        ),
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
       ),
@@ -157,10 +192,14 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                         key: ValueKey(_selectedCustomerId),
                         initialValue: _selectedCustomerId,
                         isExpanded: true,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Cliente',
-                          prefixIcon: Icon(Icons.people_outline),
-                          border: OutlineInputBorder(),
+                          prefixIcon: const Icon(Icons.people_outline),
+                          helperText:
+                              widget.isEditing && widget.hasFulfilledItems
+                              ? 'El cliente no puede cambiarse porque ya hay productos surtidos.'
+                              : null,
+                          border: const OutlineInputBorder(),
                         ),
                         items: customers.map((customer) {
                           return DropdownMenuItem<int>(
@@ -172,7 +211,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                             ),
                           );
                         }).toList(),
-                        onChanged: _isSaving
+                        onChanged:
+                            _isSaving ||
+                                (widget.isEditing && widget.hasFulfilledItems)
                             ? null
                             : (value) {
                                 setState(() {
@@ -283,7 +324,11 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                         )
                       : const Icon(Icons.save_outlined),
                   label: Text(
-                    _isSaving ? 'Guardando pedido...' : 'Registrar pedido',
+                    _isSaving
+                        ? 'Guardando pedido...'
+                        : widget.isEditing
+                        ? 'Guardar cambios'
+                        : 'Registrar pedido',
                   ),
                 ),
               ),
@@ -297,7 +342,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   Future<void> _addProduct(List<Product> products) async {
     final selectedIds = _lines.map((line) => line.product.id).toSet();
     final availableProducts = products
-        .where((product) => !selectedIds.contains(product.id))
+        .where(
+          (product) => product.isActive && !selectedIds.contains(product.id),
+        )
         .toList();
 
     if (availableProducts.isEmpty) {
@@ -429,6 +476,21 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   }
 
   void _removeLine(int index) {
+    final line = _lines[index];
+
+    if (line.fulfilledQuantity > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No puedes quitar ${line.product.name} porque ya tiene '
+            '${line.fulfilledQuantity} unidades surtidas.',
+          ),
+        ),
+      );
+
+      return;
+    }
+
     final removedLine = _lines.removeAt(index);
     removedLine.dispose();
 
@@ -469,6 +531,19 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
         return;
       }
 
+      if (quantity < line.fulfilledQuantity) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'La cantidad de ${line.product.name} no puede ser menor '
+              'que las ${line.fulfilledQuantity} unidades que ya fueron surtidas.',
+            ),
+          ),
+        );
+
+        return;
+      }
+
       inputs.add(
         CustomerOrderLineInput(
           productId: line.product.id,
@@ -483,23 +558,38 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     });
 
     try {
-      final orderId = await widget.database.createCustomerOrder(
-        customerId: _selectedCustomerId!,
-        items: inputs,
-        notes: _notesController.text,
-      );
+      if (widget.isEditing) {
+        await widget.database.updateCustomerOrder(
+          orderId: widget.orderToEdit!.order.id,
+          customerId: _selectedCustomerId!,
+          items: inputs,
+          notes: _notesController.text,
+        );
 
-      if (!mounted) {
-        return;
+        if (!mounted) {
+          return;
+        }
+
+        Navigator.pop(context, true);
+      } else {
+        final orderId = await widget.database.createCustomerOrder(
+          customerId: _selectedCustomerId!,
+          items: inputs,
+          notes: _notesController.text,
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        await Navigator.pushReplacement<void, void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                OrderDetailScreen(database: widget.database, orderId: orderId),
+          ),
+        );
       }
-
-      await Navigator.pushReplacement<void, void>(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              OrderDetailScreen(database: widget.database, orderId: orderId),
-        ),
-      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -510,7 +600,13 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo registrar el pedido: $error')),
+        SnackBar(
+          content: Text(
+            widget.isEditing
+                ? 'No se pudo actualizar el pedido: $error'
+                : 'No se pudo registrar el pedido: $error',
+          ),
+        ),
       );
     }
   }
@@ -518,12 +614,18 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
 class _OrderLineDraft {
   final Product product;
+  final int fulfilledQuantity;
+
   final TextEditingController quantityController;
   final TextEditingController notesController;
 
-  _OrderLineDraft({required this.product})
-    : quantityController = TextEditingController(text: '1'),
-      notesController = TextEditingController();
+  _OrderLineDraft({
+    required this.product,
+    int quantity = 1,
+    String? notes,
+    this.fulfilledQuantity = 0,
+  }) : quantityController = TextEditingController(text: quantity.toString()),
+       notesController = TextEditingController(text: notes ?? '');
 
   void dispose() {
     quantityController.dispose();
@@ -618,16 +720,23 @@ class _OrderLineCard extends StatelessWidget {
                 enabled: enabled,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Cantidad solicitada',
-                  prefixIcon: Icon(Icons.numbers),
-                  border: OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.numbers),
+                  helperText: line.fulfilledQuantity > 0
+                      ? 'Ya surtido: ${line.fulfilledQuantity}'
+                      : null,
+                  border: const OutlineInputBorder(),
                 ),
                 validator: (value) {
                   final quantity = int.tryParse(value?.trim() ?? '');
 
                   if (quantity == null || quantity <= 0) {
                     return 'Cantidad inválida.';
+                  }
+
+                  if (quantity < line.fulfilledQuantity) {
+                    return 'Mínimo: ${line.fulfilledQuantity}.';
                   }
 
                   return null;
