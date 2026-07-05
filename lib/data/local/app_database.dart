@@ -1,5 +1,4 @@
 import 'dart:io';
-
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:path_provider/path_provider.dart';
@@ -27,8 +26,28 @@ class CustomerOrderStatus {
   }
 }
 
+class ProductCategories extends Table {
+  IntColumn get id => integer().autoIncrement()();
+
+  TextColumn get name => text().withLength(min: 1, max: 80)();
+
+  TextColumn get description => text().nullable()();
+
+  BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+}
+
 class Products extends Table {
   IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get categoryId => integer().nullable().references(
+    ProductCategories,
+    #id,
+    onDelete: KeyAction.setNull,
+  )();
 
   TextColumn get name => text().withLength(min: 1, max: 120)();
 
@@ -37,6 +56,13 @@ class Products extends Table {
   TextColumn get barcode => text().nullable().unique()();
 
   TextColumn get description => text().nullable()();
+
+  BlobColumn get imageBytes => blob().nullable()();
+
+  BoolColumn get showInCatalog => boolean().withDefault(const Constant(true))();
+
+  BoolColumn get allowNegativeStock =>
+      boolean().withDefault(const Constant(false))();
 
   IntColumn get purchasePriceCents =>
       integer().withDefault(const Constant(0))();
@@ -467,8 +493,26 @@ class OrderFulfillmentLineInput {
   int get subtotalCents => quantity * unitCostCents;
 }
 
+class ProductCatalogItem {
+  final Product product;
+  final ProductCategory? category;
+
+  const ProductCatalogItem({required this.product, required this.category});
+
+  String get categoryName {
+    final currentCategory = category;
+
+    if (currentCategory == null || !currentCategory.isActive) {
+      return 'Sin categoría';
+    }
+
+    return currentCategory.name;
+  }
+}
+
 @DriftDatabase(
   tables: [
+    ProductCategories,
     Products,
     InventoryMovements,
     Suppliers,
@@ -488,7 +532,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   static const databaseName = 'pos_offline';
-  static const currentSchemaVersion = 5;
+  static const currentSchemaVersion = 7;
 
   static Future<Directory> getDatabaseDirectory() {
     return getApplicationSupportDirectory();
@@ -535,6 +579,20 @@ class AppDatabase extends _$AppDatabase {
 
           await migrator.createTable(orderPurchaseAllocations);
         }
+
+        if (from < 6) {
+          await migrator.createTable(productCategories);
+
+          await migrator.addColumn(products, products.categoryId);
+
+          await migrator.addColumn(products, products.imageBytes);
+
+          await migrator.addColumn(products, products.showInCatalog);
+        }
+
+        if (from < 7) {
+          await migrator.addColumn(products, products.allowNegativeStock);
+        }
       },
       beforeOpen: (details) async {
         await customStatement('PRAGMA foreign_keys = ON');
@@ -547,6 +605,177 @@ class AppDatabase extends _$AppDatabase {
       name: databaseName,
       native: DriftNativeOptions(databaseDirectory: getDatabaseDirectory),
     );
+  }
+
+  // -------------------------
+  // Categorías de productos
+  // -------------------------
+
+  Stream<List<ProductCategory>> watchProductCategories({
+    bool includeInactive = false,
+  }) {
+    final query = select(productCategories);
+
+    if (!includeInactive) {
+      query.where((tbl) => tbl.isActive.equals(true));
+    }
+
+    query.orderBy([(tbl) => OrderingTerm.asc(tbl.name)]);
+
+    return query.watch();
+  }
+
+  Future<bool> productCategoryNameExists(
+    String name, {
+    int? excludeCategoryId,
+  }) async {
+    final cleanName = name.trim().toLowerCase();
+
+    if (cleanName.isEmpty) {
+      return false;
+    }
+
+    final rows = await select(productCategories).get();
+
+    return rows.any(
+      (category) =>
+          category.id != excludeCategoryId &&
+          category.name.trim().toLowerCase() == cleanName,
+    );
+  }
+
+  Future<int> createProductCategory({
+    required String name,
+    String? description,
+  }) async {
+    final cleanName = name.trim();
+    final cleanDescription = _cleanOptionalText(description);
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('El nombre de la categoría es obligatorio.');
+    }
+
+    if (cleanName.length > 80) {
+      throw ArgumentError('La categoría no puede superar los 80 caracteres.');
+    }
+
+    if (await productCategoryNameExists(cleanName)) {
+      throw StateError('Ya existe una categoría con ese nombre.');
+    }
+
+    return into(productCategories).insert(
+      ProductCategoriesCompanion(
+        name: Value(cleanName),
+        description: Value(cleanDescription),
+      ),
+    );
+  }
+
+  Future<void> updateProductCategory({
+    required int categoryId,
+    required String name,
+    String? description,
+  }) async {
+    final cleanName = name.trim();
+    final cleanDescription = _cleanOptionalText(description);
+
+    if (cleanName.isEmpty) {
+      throw ArgumentError('El nombre de la categoría es obligatorio.');
+    }
+
+    if (cleanName.length > 80) {
+      throw ArgumentError('La categoría no puede superar los 80 caracteres.');
+    }
+
+    if (await productCategoryNameExists(
+      cleanName,
+      excludeCategoryId: categoryId,
+    )) {
+      throw StateError('Ya existe una categoría con ese nombre.');
+    }
+
+    final affectedRows =
+        await (update(
+          productCategories,
+        )..where((tbl) => tbl.id.equals(categoryId))).write(
+          ProductCategoriesCompanion(
+            name: Value(cleanName),
+            description: Value(cleanDescription),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+    if (affectedRows == 0) {
+      throw StateError('No se encontró la categoría.');
+    }
+  }
+
+  Future<void> setProductCategoryActive({
+    required int categoryId,
+    required bool isActive,
+  }) async {
+    final affectedRows =
+        await (update(
+          productCategories,
+        )..where((tbl) => tbl.id.equals(categoryId))).write(
+          ProductCategoriesCompanion(
+            isActive: Value(isActive),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+
+    if (affectedRows == 0) {
+      throw StateError('No se encontró la categoría.');
+    }
+  }
+
+  Stream<List<ProductCatalogItem>> watchCatalogProducts() {
+    final query = select(products).join([
+      leftOuterJoin(
+        productCategories,
+        productCategories.id.equalsExp(products.categoryId),
+      ),
+    ]);
+
+    query.where(
+      products.isActive.equals(true) & products.showInCatalog.equals(true),
+    );
+
+    query.orderBy([
+      OrderingTerm.asc(productCategories.name),
+      OrderingTerm.asc(products.name),
+    ]);
+
+    return query.watch().map((rows) {
+      return rows.map((row) {
+        return ProductCatalogItem(
+          product: row.readTable(products),
+          category: row.readTableOrNull(productCategories),
+        );
+      }).toList();
+    });
+  }
+
+  Stream<ProductCatalogItem?> watchCatalogProductById(int productId) {
+    final query = select(products).join([
+      leftOuterJoin(
+        productCategories,
+        productCategories.id.equalsExp(products.categoryId),
+      ),
+    ]);
+
+    query.where(products.id.equals(productId));
+
+    return query.watchSingleOrNull().map((row) {
+      if (row == null) {
+        return null;
+      }
+
+      return ProductCatalogItem(
+        product: row.readTable(products),
+        category: row.readTableOrNull(productCategories),
+      );
+    });
   }
 
   // -------------------------
@@ -622,16 +851,39 @@ class AppDatabase extends _$AppDatabase {
     String? sku,
     String? barcode,
     String? description,
+    int? categoryId,
+    Uint8List? imageBytes,
+    required bool showInCatalog,
+    required bool allowNegativeStock,
     required int purchasePriceCents,
     required int salePriceCents,
     required int minStock,
-  }) {
+  }) async {
+    final existingProduct = await getProductById(id);
+
+    if (existingProduct == null) {
+      throw StateError('No se encontró el producto.');
+    }
+
+    if (!allowNegativeStock && existingProduct.currentStock < 0) {
+      throw StateError(
+        'No puedes desactivar las existencias negativas '
+        'mientras el stock actual sea '
+        '${existingProduct.currentStock}. '
+        'Primero ajusta el stock a cero o a una cantidad positiva.',
+      );
+    }
+
     return (update(products)..where((tbl) => tbl.id.equals(id))).write(
       ProductsCompanion(
         name: Value(name),
         sku: Value(sku),
         barcode: Value(barcode),
         description: Value(description),
+        categoryId: Value(categoryId),
+        imageBytes: Value(imageBytes),
+        showInCatalog: Value(showInCatalog),
+        allowNegativeStock: Value(allowNegativeStock),
         purchasePriceCents: Value(purchasePriceCents),
         salePriceCents: Value(salePriceCents),
         minStock: Value(minStock),
@@ -657,8 +909,10 @@ class AppDatabase extends _$AppDatabase {
 
       final newStock = product.currentStock + quantity;
 
-      if (newStock < 0) {
-        throw Exception('El stock no puede quedar en negativo.');
+      if (newStock < 0 && !product.allowNegativeStock) {
+        throw StateError(
+          'El stock de "${product.name}" no puede quedar en negativo.',
+        );
       }
 
       await (update(products)..where((tbl) => tbl.id.equals(productId))).write(
@@ -1080,7 +1334,8 @@ class AppDatabase extends _$AppDatabase {
         final product = productRows.first;
         final quantityToRemove = entry.value;
 
-        if (product.currentStock < quantityToRemove) {
+        if (!product.allowNegativeStock &&
+            product.currentStock < quantityToRemove) {
           throw StateError(
             'No se puede cancelar la compra porque '
             '"${product.name}" solo tiene ${product.currentStock} '
@@ -1253,7 +1508,8 @@ class AppDatabase extends _$AppDatabase {
           throw StateError('El producto "${product.name}" está inactivo.');
         }
 
-        if (product.currentStock < item.quantity) {
+        if (!product.allowNegativeStock &&
+            product.currentStock < item.quantity) {
           throw StateError(
             'No hay suficiente stock de "${product.name}". '
             'Disponible: ${product.currentStock}. '

@@ -434,6 +434,7 @@ class _BackupContentCard extends StatelessWidget {
   Widget build(BuildContext context) {
     const items = [
       (Icons.inventory_2_outlined, 'Productos e inventario'),
+      (Icons.storefront_outlined, 'Catálogo, categorías e imágenes'),
       (Icons.people_outline, 'Clientes'),
       (Icons.assignment_outlined, 'Pedidos y productos solicitados'),
       (Icons.shopping_cart_outlined, 'Compras, proveedores y surtidos'),

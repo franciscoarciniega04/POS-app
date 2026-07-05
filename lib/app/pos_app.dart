@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../data/local/app_database.dart';
+import '../features/backups/screens/backup_screen.dart';
+import '../features/cash/screens/cash_screen.dart';
+import '../features/catalog/screens/product_catalog_screen.dart';
+import '../features/customers/screens/customers_screen.dart';
+import '../features/expenses/screens/expenses_screen.dart';
+import '../features/inventory/screens/inventory_screen.dart';
+import '../features/orders/screens/orders_screen.dart';
 import '../features/products/screens/products_screen.dart';
 import '../features/purchases/screens/purchases_screen.dart';
-import '../features/suppliers/screens/suppliers_screen.dart';
-import '../features/sales/screens/sales_screen.dart';
-import '../features/inventory/screens/inventory_screen.dart';
-import '../features/expenses/screens/expenses_screen.dart';
-import '../features/cash/screens/cash_screen.dart';
 import '../features/reports/screens/reports_screen.dart';
-import '../features/backups/screens/backup_screen.dart';
-import '../features/customers/screens/customers_screen.dart';
-import '../features/orders/screens/orders_screen.dart';
+import '../features/sales/screens/sales_screen.dart';
+import '../features/suppliers/screens/suppliers_screen.dart';
 
 class PosApp extends StatelessWidget {
   final AppDatabase database;
@@ -35,8 +36,8 @@ class PosApp extends StatelessWidget {
         cardTheme: CardThemeData(
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(18)),
-            side: BorderSide(color: Color(0xFFE0E0E0)),
+            borderRadius: const BorderRadius.all(Radius.circular(18)),
+            side: const BorderSide(color: Color(0xFFE0E0E0)),
           ),
         ),
       ),
@@ -55,7 +56,7 @@ class HomeScreen extends StatelessWidget {
     final modules = [
       _HomeModule(
         title: 'Productos',
-        subtitle: 'Catálogo, precios y stock',
+        subtitle: 'Administración, precios y stock',
         icon: Icons.inventory_2_outlined,
         iconColor: const Color(0xFF4338CA),
         iconBackgroundColor: const Color(0xFFEEF2FF),
@@ -69,17 +70,45 @@ class HomeScreen extends StatelessWidget {
         },
       ),
       _HomeModule(
-        title: 'Proveedores',
-        subtitle: 'Catálogo y datos de contacto',
-        icon: Icons.local_shipping_outlined,
-        iconColor: const Color(0xFF0F766E),
-        iconBackgroundColor: const Color(0xFFF0FDFA),
+        title: 'Catálogo',
+        subtitle: 'Productos por categoría e imagen',
+        icon: Icons.storefront_outlined,
+        iconColor: const Color(0xFF7C3AED),
+        iconBackgroundColor: const Color(0xFFF5F3FF),
         onTap: () {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => SuppliersScreen(database: database),
+              builder: (_) => ProductCatalogScreen(database: database),
             ),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Inventario',
+        subtitle: 'Historial y movimientos',
+        icon: Icons.warehouse_outlined,
+        iconColor: const Color(0xFF475569),
+        iconBackgroundColor: const Color(0xFFF1F5F9),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InventoryScreen(database: database),
+            ),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Pedidos',
+        subtitle: 'Solicitudes de productos por cliente',
+        icon: Icons.receipt_long_outlined,
+        iconColor: const Color(0xFF7C3AED),
+        iconBackgroundColor: const Color(0xFFF5F3FF),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => OrdersScreen(database: database)),
           );
         },
       ),
@@ -112,17 +141,15 @@ class HomeScreen extends StatelessWidget {
         },
       ),
       _HomeModule(
-        title: 'Inventario',
-        subtitle: 'Historial y movimientos',
-        icon: Icons.warehouse_outlined,
-        iconColor: const Color(0xFF475569),
-        iconBackgroundColor: const Color(0xFFF1F5F9),
+        title: 'Caja',
+        subtitle: 'Ingresos, egresos y saldo',
+        icon: Icons.account_balance_wallet_outlined,
+        iconColor: const Color(0xFF15803D),
+        iconBackgroundColor: const Color(0xFFECFDF3),
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => InventoryScreen(database: database),
-            ),
+            MaterialPageRoute(builder: (_) => CashScreen(database: database)),
           );
         },
       ),
@@ -142,19 +169,6 @@ class HomeScreen extends StatelessWidget {
         },
       ),
       _HomeModule(
-        title: 'Caja',
-        subtitle: 'Ingresos, egresos y saldo',
-        icon: Icons.account_balance_wallet_outlined,
-        iconColor: const Color(0xFF15803D),
-        iconBackgroundColor: const Color(0xFFECFDF3),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => CashScreen(database: database)),
-          );
-        },
-      ),
-      _HomeModule(
         title: 'Reportes',
         subtitle: 'Ventas, ganancias y resumen',
         icon: Icons.bar_chart_outlined,
@@ -166,19 +180,6 @@ class HomeScreen extends StatelessWidget {
             MaterialPageRoute(
               builder: (_) => ReportsScreen(database: database),
             ),
-          );
-        },
-      ),
-      _HomeModule(
-        title: 'Respaldos',
-        subtitle: 'Proteger la base de datos',
-        icon: Icons.backup_outlined,
-        iconColor: const Color(0xFF1D4ED8),
-        iconBackgroundColor: const Color(0xFFEFF6FF),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => BackupScreen(database: database)),
           );
         },
       ),
@@ -198,15 +199,30 @@ class HomeScreen extends StatelessWidget {
         },
       ),
       _HomeModule(
-        title: 'Pedidos',
-        subtitle: 'Solicitudes de productos por cliente',
-        icon: Icons.receipt_long_outlined,
-        iconColor: const Color(0xFF7C3AED),
-        iconBackgroundColor: const Color(0xFFF5F3FF),
+        title: 'Proveedores',
+        subtitle: 'Catálogo y datos de contacto',
+        icon: Icons.local_shipping_outlined,
+        iconColor: const Color(0xFF0F766E),
+        iconBackgroundColor: const Color(0xFFF0FDFA),
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => OrdersScreen(database: database)),
+            MaterialPageRoute(
+              builder: (_) => SuppliersScreen(database: database),
+            ),
+          );
+        },
+      ),
+      _HomeModule(
+        title: 'Respaldos',
+        subtitle: 'Proteger la base de datos',
+        icon: Icons.backup_outlined,
+        iconColor: const Color(0xFF1D4ED8),
+        iconBackgroundColor: const Color(0xFFEFF6FF),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => BackupScreen(database: database)),
           );
         },
       ),

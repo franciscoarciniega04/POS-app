@@ -51,11 +51,15 @@ class DatabaseRestoreService {
       });
     }
 
+    if (databaseVersion >= 6) {
+      tables.add('product_categories');
+    }
+
     return tables;
   }
 
   static Future<File?> selectBackupFile() async {
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.platform.pickFiles(
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: ['sqlite', 'sqlite3', 'db'],

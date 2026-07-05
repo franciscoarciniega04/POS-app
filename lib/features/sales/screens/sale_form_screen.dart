@@ -528,8 +528,12 @@ class _SaleItemCard extends StatelessWidget {
                       label: 'Precio: ${formatCents(item.unitPriceCents)}',
                     ),
                     _SaleInformationChip(
-                      icon: Icons.inventory_outlined,
-                      label: 'Stock: ${item.product.currentStock}',
+                      icon: item.product.allowNegativeStock
+                          ? Icons.remove_shopping_cart_outlined
+                          : Icons.inventory_outlined,
+                      label: item.product.allowNegativeStock
+                          ? 'Stock flexible: ${item.product.currentStock}'
+                          : 'Stock: ${item.product.currentStock}',
                     ),
                   ],
                 ),
@@ -799,7 +803,10 @@ class _SaleItemSheetState extends State<_SaleItemSheet> {
         final availableProducts =
             (snapshot.data ?? [])
                 .where((product) => product.isActive)
-                .where((product) => product.currentStock > 0)
+                .where(
+                  (product) =>
+                      product.currentStock > 0 || product.allowNegativeStock,
+                )
                 .where(
                   (product) =>
                       !widget.excludedProductIds.contains(product.id) ||
@@ -841,7 +848,9 @@ class _SaleItemSheetState extends State<_SaleItemSheet> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Selecciona un producto con existencias y captura la cantidad vendida.',
+                  'Selecciona un producto y captura la cantidad vendida. '
+                  'Los productos configurados para permitir stock negativo '
+                  'pueden venderse sin existencias.',
                   style: Theme.of(
                     context,
                   ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
@@ -860,7 +869,9 @@ class _SaleItemSheetState extends State<_SaleItemSheet> {
                     return DropdownMenuItem<int>(
                       value: product.id,
                       child: Text(
-                        '${product.name} · Stock ${product.currentStock}',
+                        product.allowNegativeStock
+                            ? '${product.name} · Bajo pedido · Stock ${product.currentStock}'
+                            : '${product.name} · Stock ${product.currentStock}',
                         overflow: TextOverflow.ellipsis,
                       ),
                     );
@@ -915,7 +926,12 @@ class _SaleItemSheetState extends State<_SaleItemSheet> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(
-                      'Existencias disponibles: ${_selectedProduct!.currentStock}',
+                      _selectedProduct!.allowNegativeStock
+                          ? 'Venta sin límite de existencias habilitada. '
+                                'Stock actual: '
+                                '${_selectedProduct!.currentStock}'
+                          : 'Existencias disponibles: '
+                                '${_selectedProduct!.currentStock}',
                       style: const TextStyle(
                         color: Color(0xFF1E4E79),
                         fontWeight: FontWeight.w700,
@@ -945,7 +961,9 @@ class _SaleItemSheetState extends State<_SaleItemSheet> {
 
                     final product = _selectedProduct;
 
-                    if (product != null && quantity > product.currentStock) {
+                    if (product != null &&
+                        !product.allowNegativeStock &&
+                        quantity > product.currentStock) {
                       return 'Solo hay ${product.currentStock} unidades disponibles';
                     }
 
@@ -1045,14 +1063,15 @@ class _NoProductsWithStock extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Text(
-              'No hay productos con existencias',
+              'No hay productos disponibles para vender',
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 7),
             Text(
-              'Registra una compra o ajusta el inventario antes de realizar la venta.',
+              'Registra una compra, ajusta el inventario o habilita '
+              'existencias negativas en el producto.',
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),

@@ -17,10 +17,11 @@ class ProductDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<Product?>(
-      stream: database.watchProductById(productId),
+    return StreamBuilder<ProductCatalogItem?>(
+      stream: database.watchCatalogProductById(productId),
       builder: (context, snapshot) {
-        final product = snapshot.data;
+        final item = snapshot.data;
+        final product = item?.product;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF7F8FA),
@@ -69,30 +70,46 @@ class ProductDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBody(BuildContext context, AsyncSnapshot<Product?> snapshot) {
-    if (snapshot.connectionState == ConnectionState.waiting) {
+  Widget _buildBody(
+    BuildContext context,
+    AsyncSnapshot<ProductCatalogItem?> snapshot,
+  ) {
+    if (snapshot.connectionState == ConnectionState.waiting &&
+        !snapshot.hasData) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (snapshot.hasError) {
-      return Center(child: Text('Error: ${snapshot.error}'));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
+        ),
+      );
     }
 
-    final product = snapshot.data;
+    final item = snapshot.data;
 
-    if (product == null) {
+    if (item == null) {
       return const Center(child: Text('Producto no encontrado.'));
     }
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-      children: [
-        _ProductSummaryCard(product: product),
-        const SizedBox(height: 16),
-        _InventoryCard(product: product),
-        const SizedBox(height: 16),
-        _MovementsCard(database: database, productId: product.id),
-      ],
+    final product = item.product;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1100),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+          children: [
+            _ProductSummaryCard(item: item),
+            const SizedBox(height: 16),
+            _InventoryCard(product: product),
+            const SizedBox(height: 16),
+            _MovementsCard(database: database, productId: product.id),
+          ],
+        ),
+      ),
     );
   }
 
@@ -118,106 +135,268 @@ class ProductDetailScreen extends StatelessWidget {
 }
 
 class _ProductSummaryCard extends StatelessWidget {
-  final Product product;
+  final ProductCatalogItem item;
 
-  const _ProductSummaryCard({required this.product});
+  const _ProductSummaryCard({required this.item});
 
   @override
   Widget build(BuildContext context) {
+    final product = item.product;
+
     final marginCents = product.salePriceCents - product.purchasePriceCents;
 
+    final description = product.description?.trim();
+
+    final categoryName = item.category == null
+        ? 'Sin categoría'
+        : item.category!.isActive
+        ? item.category!.name
+        : '${item.category!.name} (inactiva)';
+
+    final image = _AdministrativeProductImage(product: product);
+
+    final information = Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _DetailStatusChip(
+                label: product.isActive ? 'Activo' : 'Inactivo',
+                foreground: product.isActive
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFF64748B),
+                background: product.isActive
+                    ? const Color(0xFFECFDF3)
+                    : const Color(0xFFF1F5F9),
+                icon: product.isActive
+                    ? Icons.check_circle_outline
+                    : Icons.block_outlined,
+              ),
+              _DetailStatusChip(
+                label: categoryName,
+                foreground: const Color(0xFF7C3AED),
+                background: const Color(0xFFF5F3FF),
+                icon: Icons.category_outlined,
+              ),
+              _DetailStatusChip(
+                label: product.showInCatalog
+                    ? 'Visible en catálogo'
+                    : 'Oculto del catálogo',
+                foreground: product.showInCatalog
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFF64748B),
+                background: product.showInCatalog
+                    ? const Color(0xFFECFDF3)
+                    : const Color(0xFFF1F5F9),
+                icon: product.showInCatalog
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
+              _DetailStatusChip(
+                label: product.allowNegativeStock
+                    ? 'Permite stock negativo'
+                    : 'Control de stock activo',
+                foreground: product.allowNegativeStock
+                    ? const Color(0xFFC2410C)
+                    : const Color(0xFF1E4E79),
+                background: product.allowNegativeStock
+                    ? const Color(0xFFFFF7ED)
+                    : const Color(0xFFEFF6FF),
+                icon: product.allowNegativeStock
+                    ? Icons.remove_shopping_cart_outlined
+                    : Icons.inventory_outlined,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            product.name,
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            description?.isNotEmpty == true ? description! : 'Sin descripción',
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: Colors.grey.shade800,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _InfoPill(
+                label: 'SKU',
+                value: product.sku?.isNotEmpty == true ? product.sku! : 'N/A',
+              ),
+              _InfoPill(
+                label: 'Código',
+                value: product.barcode?.isNotEmpty == true
+                    ? product.barcode!
+                    : 'N/A',
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final purchase = _MetricBox(
+                title: 'Compra',
+                value: formatCents(product.purchasePriceCents),
+                icon: Icons.shopping_bag_outlined,
+              );
+
+              final sale = _MetricBox(
+                title: 'Venta',
+                value: formatCents(product.salePriceCents),
+                icon: Icons.sell_outlined,
+              );
+
+              if (constraints.maxWidth >= 520) {
+                return Row(
+                  children: [
+                    Expanded(child: purchase),
+                    const SizedBox(width: 12),
+                    Expanded(child: sale),
+                  ],
+                );
+              }
+
+              return Column(
+                children: [purchase, const SizedBox(height: 12), sale],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          _MetricBox(
+            title: 'Ganancia estimada por unidad',
+            value: formatCents(marginCents),
+            icon: Icons.trending_up_outlined,
+            fullWidth: true,
+          ),
+        ],
+      ),
+    );
+
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      clipBehavior: Clip.antiAlias,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 780) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    color: Colors.indigo.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: const Icon(
-                    Icons.inventory_2_outlined,
-                    color: Colors.indigo,
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        product.name,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        product.description?.isNotEmpty == true
-                            ? product.description!
-                            : 'Sin descripción',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                SizedBox(width: 360, height: 430, child: image),
+                Expanded(child: information),
               ],
+            );
+          }
+
+          return Column(
+            children: [
+              SizedBox(width: double.infinity, height: 290, child: image),
+              information,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AdministrativeProductImage extends StatelessWidget {
+  final Product product;
+
+  const _AdministrativeProductImage({required this.product});
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = product.imageBytes;
+
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const _ProductImagePlaceholder();
+        },
+      );
+    }
+
+    return const _ProductImagePlaceholder();
+  }
+}
+
+class _ProductImagePlaceholder extends StatelessWidget {
+  const _ProductImagePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFFF1F5F9),
+      alignment: Alignment.center,
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.image_outlined, size: 82, color: Color(0xFF94A3B8)),
+          SizedBox(height: 12),
+          Text(
+            'Sin imagen',
+            style: TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _InfoPill(
-                  label: 'SKU',
-                  value: product.sku?.isNotEmpty == true ? product.sku! : 'N/A',
-                ),
-                _InfoPill(
-                  label: 'Código',
-                  value: product.barcode?.isNotEmpty == true
-                      ? product.barcode!
-                      : 'N/A',
-                ),
-              ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailStatusChip extends StatelessWidget {
+  final String label;
+  final Color foreground;
+  final Color background;
+  final IconData icon;
+
+  const _DetailStatusChip({
+    required this.label,
+    required this.foreground,
+    required this.background,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: foreground),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
             ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: _MetricBox(
-                    title: 'Compra',
-                    value: formatCents(product.purchasePriceCents),
-                    icon: Icons.shopping_bag_outlined,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _MetricBox(
-                    title: 'Venta',
-                    value: formatCents(product.salePriceCents),
-                    icon: Icons.sell_outlined,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _MetricBox(
-              title: 'Ganancia estimada por unidad',
-              value: formatCents(marginCents),
-              icon: Icons.trending_up_outlined,
-              fullWidth: true,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -230,7 +409,9 @@ class _InventoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isLowStock = product.currentStock <= product.minStock;
+    final isNegative = product.currentStock < 0;
+    final isLowStock =
+        !product.allowNegativeStock && product.currentStock <= product.minStock;
 
     return Card(
       child: Padding(
@@ -247,7 +428,7 @@ class _InventoryCard extends StatelessWidget {
                     title: 'Stock actual',
                     value: product.currentStock.toString(),
                     icon: Icons.inventory_outlined,
-                    danger: isLowStock,
+                    danger: isNegative || isLowStock,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -259,6 +440,49 @@ class _InventoryCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: product.allowNegativeStock
+                    ? const Color(0xFFFFF7ED)
+                    : const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    product.allowNegativeStock
+                        ? Icons.remove_shopping_cart_outlined
+                        : Icons.inventory_outlined,
+                    color: product.allowNegativeStock
+                        ? const Color(0xFFC2410C)
+                        : const Color(0xFF1E4E79),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      product.allowNegativeStock
+                          ? isNegative
+                                ? 'Las ventas sin existencias están habilitadas. '
+                                      'Faltan ${-product.currentStock} unidades '
+                                      'para regresar el stock a cero.'
+                                : 'Las ventas pueden continuar aunque el stock '
+                                      'llegue a cero o quede negativo.'
+                          : 'Este producto bloquea ventas y ajustes que '
+                                'dejen el stock por debajo de cero.',
+                      style: TextStyle(
+                        color: product.allowNegativeStock
+                            ? const Color(0xFF9A3412)
+                            : const Color(0xFF1E4E79),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             if (isLowStock) ...[
               const SizedBox(height: 14),
@@ -516,10 +740,25 @@ class _StockAdjustmentSheetState extends State<_StockAdjustmentSheet> {
                 style: TextStyle(color: Colors.grey.shade700),
               ),
             ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                widget.product.allowNegativeStock
+                    ? 'Este producto permite valores negativos.'
+                    : 'El valor mínimo permitido es cero.',
+                style: TextStyle(
+                  color: widget.product.allowNegativeStock
+                      ? const Color(0xFFC2410C)
+                      : Colors.grey.shade700,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
             const SizedBox(height: 18),
             TextFormField(
               controller: _newStockController,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(signed: true),
               decoration: const InputDecoration(
                 labelText: 'Nueva existencia real',
                 hintText: 'Ej. 25',
@@ -532,8 +771,8 @@ class _StockAdjustmentSheetState extends State<_StockAdjustmentSheet> {
                   return 'Escribe una cantidad válida';
                 }
 
-                if (number < 0) {
-                  return 'El stock no puede ser negativo';
+                if (number < 0 && !widget.product.allowNegativeStock) {
+                  return 'Este producto no permite stock negativo';
                 }
 
                 return null;
