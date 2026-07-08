@@ -1,9 +1,6 @@
-; Instalador de POS Offline
-; Generado para Amigos Tec
-
-#define MyAppName "POS Offline"
+#define MyAppName "SGIV"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "Amigos Tec"
+#define MyAppPublisher "Francisco Daniel Arciniega Robles"
 #define MyAppExeName "pos_offline.exe"
 
 [Setup]
@@ -19,7 +16,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=C:\Users\josea\pos_offline\installer_output
-OutputBaseFilename=POS_Offline_Setup_1.0.0
+OutputBaseFilename=SGIV_Setup_1.0.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
