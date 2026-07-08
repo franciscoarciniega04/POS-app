@@ -787,7 +787,10 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Stream<List<Product>> watchAllProducts() {
-    return select(products).watch();
+    final query = select(products)
+      ..orderBy([(tbl) => OrderingTerm.asc(tbl.name)]);
+
+    return query.watch();
   }
 
   Future<int> insertProduct(ProductsCompanion product) {
